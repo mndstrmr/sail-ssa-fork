@@ -91,6 +91,8 @@ let opt_comb = ref false
 let opt_inregs = ref false
 let opt_outregs = ref false
 
+let opt_nostrings = ref false
+
 let verilog_options =
   [
     ( "-sv_verilate",
@@ -110,6 +112,7 @@ let verilog_options =
     ("-sv_comb", Arg.Set opt_comb, " output an always_comb block instead of initial block");
     ("-sv_inregs", Arg.Set opt_inregs, " take register values from inputs");
     ("-sv_outregs", Arg.Set opt_outregs, " output register values");
+    ("-sv_nostrings", Arg.Set opt_nostrings, " don't output strings");
   ]
 
 let verilog_rewrites =
@@ -462,7 +465,7 @@ let rec sv_ctyp = function
   | CT_lbits _ -> string "sail_bits"
   | CT_fint width -> ksprintf string "logic [%d:0]" (width - 1)
   | CT_lint -> ksprintf string "logic [%d:0]" (max_integer_width - 1)
-  | CT_string -> string "string"
+  | CT_string -> if !opt_nostrings then string "sail_nostring" else string "string"
   | CT_unit -> string "sail_unit"
   | CT_variant (id, _) | CT_struct (id, _) | CT_enum (id, _) -> sv_id id
   | CT_constant c ->
@@ -674,7 +677,7 @@ let rec sv_smt ?(need_parens = false) =
       else ksprintf string "%d'b%s" len (Util.string_of_list "" string_of_bitU bits)
   | Bool_lit true -> string "1"
   | Bool_lit false -> string "0"
-  | String_lit s -> ksprintf string "\"%s\"" s
+  | String_lit s -> if !opt_nostrings then string "SAIL_NOSTRING" else ksprintf string "\"%s\"" s
   | Enum "unit" -> string "SAIL_UNIT"
   | Fn ("Bits", [size; bv]) -> squote ^^ lbrace ^^ sv_smt size ^^ comma ^^ space ^^ sv_smt bv ^^ rbrace
   | Fn ("concat", xs) -> lbrace ^^ separate_map (comma ^^ space) sv_smt xs ^^ rbrace
@@ -1036,7 +1039,10 @@ let verilog_target _ default_sail_dir out_opt ast effect_info env =
   let registers = register_types cdefs in
 
   let include_doc =
-    string "`include \"sail.sv\"" ^^ hardline ^^ ksprintf string "`include \"sail_genlib_%s.sv\"" out ^^ twice hardline
+    (if !opt_nostrings then string "`define SAIL_NOSTRING" ^^ hardline else empty)
+    ^^ string "`include \"sail.sv\"" ^^ hardline
+    ^^ ksprintf string "`include \"sail_genlib_%s.sv\"" out
+    ^^ twice hardline
   in
 
   let exception_vars =
