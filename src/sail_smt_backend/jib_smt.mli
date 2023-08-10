@@ -171,6 +171,8 @@ val serialize_smt_model : string -> Type_check.Env.t -> Effects.side_effect_info
 
 val deserialize_smt_model : string -> cdef list * ctx
 
+val expand_reg_deref : Type_check.env -> id list CTMap.t -> instr -> instr
+
 (** Generate SMT for all the $property and $counterexample pragmas in
    an AST, and write it to appropriately named files. *)
 val generate_smt :
