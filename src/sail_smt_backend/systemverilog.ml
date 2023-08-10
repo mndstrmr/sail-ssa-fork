@@ -933,7 +933,7 @@ let sv_fundef ctx f params param_ctyps ret_ctyp body all_cdefs this_cdef fn_ctyp
   in
   let stack, _, _ = Jib_smt.smt_instr_list (sv_id_string f) ctx all_cdefs instrs in
   let code = Jib_smt.smt_header ctx all_cdefs @ Stack.fold (fun x y -> y :: x) [] stack in
-  let modules, code = List.fold_left (fun (modules, code) def ->
+  let modules, code = List.fold_right (fun def (modules, code) ->
     output_string stdout (Smtlib.string_of_smt_def def);
     output_string stdout "\n";
     match def with
@@ -941,13 +941,19 @@ let sv_fundef ctx f params param_ctyps ret_ctyp body all_cdefs this_cdef fn_ctyp
       let new_modules, new_expr = sv_make_instances ctx nm exp fn_ctyps globals in
       (Queue.fold (^^) modules new_modules, Smtlib.Define_const (nm, ty, new_expr) :: code)
     | _ -> (modules, def :: code)
-  ) (empty, []) code in
+  ) code (empty, []) in
   let final_return = sv_end_assignment "return" code in
+  let decl_doc = List.fold_left
+  (fun doc def ->
+    match def with
+    | Smtlib.Define_const (nm, ty, exp) -> doc ^^
+      separate space [sv_smt_ctyp ty; string (sv_name_for_smt_name nm)] ^^ semi ^^ hardline
+    | _ -> doc
+  ) empty code in
   let code_doc = List.fold_left
     (fun doc def ->
       match def with
       | Smtlib.Define_const (nm, ty, exp) -> doc ^^
-        separate space [sv_smt_ctyp ty; string (sv_name_for_smt_name nm)] ^^ semi ^^ hardline ^^
         separate space [string "assign"; string (sv_name_for_smt_name nm); equals; sv_smt exp] ^^ semi ^^ hardline
       | _ -> doc
     ) empty code in
@@ -968,7 +974,7 @@ let sv_fundef ctx f params param_ctyps ret_ctyp body all_cdefs this_cdef fn_ctyp
   parens (separate (comma ^^ space) ((return_doc :: param_docs) @ state_docs)) ^^ semi
   ^^ nest 4 (
     hardline ^^
-    modules ^^ code_doc
+    decl_doc ^^ modules ^^ code_doc
     ^^ separate space [string "assign"; string (sv_name_for_smt_name "return_$_end"); equals; string (sv_name_for_smt_name final_return)] ^^ semi
   )
   ^^ hardline ^^ string "endinterface"
