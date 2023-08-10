@@ -87,11 +87,7 @@ let opt_verilate = ref Verilator_none
 
 let opt_line_directives = ref false
 
-let opt_comb = ref false
-
-let opt_inregs = ref false
-let opt_outregs = ref false
-
+(* FIXME: Add these to SMT *)
 let verilog_options =
   [
     ( "-sv_verilate",
@@ -108,9 +104,6 @@ let verilog_options =
       "<compile|run> Invoke verilator on generated output"
     );
     ("-sv_lines", Arg.Set opt_line_directives, " output `line directives");
-    ("-sv_comb", Arg.Set opt_comb, " output an always_comb block instead of initial block");
-    ("-sv_inregs", Arg.Set opt_inregs, " take register values from inputs");
-    ("-sv_outregs", Arg.Set opt_outregs, " output register values");
   ]
 
 let verilog_rewrites =
@@ -457,7 +450,6 @@ let rec sv_smt_ctyp = function
   | Bool -> string "bit"
   | String -> string "string"
   | Real -> string "real"
-  (* | Datatype string * (string * (string * smt_typ) list) list *)
   | Datatype (nm, _) when nm = "Unit" -> string "sail_unit"
   | Datatype (nm, _) -> string nm
   | Tuple _ -> failwith "tuple"
@@ -623,6 +615,25 @@ let sv_type_def = function
         ^^ separate (twice hardline) constructors
         ^^ exception_boilerplate
       )
+
+let sv_smt_type_def = function
+  | Smtlib.Declare_datatypes (nm, ctors) ->
+    if List.length ctors = 1 then
+      let (ctor_nm, fields) = List.hd ctors in
+      separate space [string "typedef"; string "struct"; string "packed"] ^^ space
+      ^^ group (lbrace ^^ nest 4 (
+        hardline ^^
+        separate hardline (
+          List.map (
+            fun (nm, ty) -> sv_smt_ctyp ty ^^ space ^^ string nm ^^ semi
+          ) fields
+        )
+        ) ^^ hardline ^^ rbrace
+      )
+      ^^ space ^^ string ctor_nm ^^ semi
+    else
+      failwith "Todo union"
+  | _ -> failwith "Not a datatype"
 
 module Smt =
   Smt_builtins.Make
@@ -827,10 +838,12 @@ let sv_line_directive l =
 let sv_fn_ret_typ fn res_typ globals =
   CT_struct (mk_id (fn ^ "_$_res"), (mk_id "res", res_typ) :: List.map (fun (ty, nm) -> (nm, ty)) globals)
 
+(* let sv_fn_ret_typ ctx fn res_typ globals = Jib_smt.smt_ctyp ctx (sv_fn_ret_typ fn res_typ globals) *)
+
 let sv_fn_ret_typ_def fn res_typ globals =
   CTD_struct (mk_id (fn ^ "_$_res"), (mk_id "res", res_typ) :: List.map (fun (ty, nm) -> (nm, ty)) globals)
 
-let sv_make_instances line_nm exp fn_ctyps globals =
+let sv_make_instances ctx line_nm exp fn_ctyps globals =
   let instances = Queue.create () in
   let new_exp = Smtlib.fold_smt_exp (fun exp ->
     match exp with
@@ -840,7 +853,7 @@ let sv_make_instances line_nm exp fn_ctyps globals =
         match Bindings.find_opt (Id_aux (Id fn_nm, Unknown)) fn_ctyps with
         | Some (_, ret_ctyp) ->
           let ty = sv_fn_ret_typ fn_nm ret_ctyp globals in
-          sv_ctyp ty ^^ space ^^ string (sv_name_for_smt_name line_nm ^ "_$_" ^ fn_nm) ^^ semi ^^ hardline ^^
+          sv_smt_ctyp (Jib_smt.smt_ctyp ctx ty) ^^ space ^^ string (sv_name_for_smt_name line_nm ^ "_$_" ^ fn_nm) ^^ semi ^^ hardline ^^
           string fn_nm ^^ space ^^ string (sv_name_for_smt_name line_nm ^ "_$_" ^ fn_nm ^ "_$_i") ^^
           parens (
             separate (comma ^^ space) (
@@ -909,7 +922,7 @@ let sv_fundef ctx f params param_ctyps ret_ctyp body all_cdefs this_cdef fn_ctyp
   | _ -> failwith "Could not find type"
   in
   let real_res_typ = sv_fn_ret_typ (string_of_id f) ret_ctyps globals in
-  let real_res_typ_def = sv_fn_ret_typ_def (string_of_id f) ret_ctyps globals in
+  let real_res_typ_def = Jib_smt.smt_ctype_def ctx (sv_fn_ret_typ_def (string_of_id f) ret_ctyps globals) in
   let instrs =
     let open Jib_optimize in
     body
@@ -925,7 +938,7 @@ let sv_fundef ctx f params param_ctyps ret_ctyp body all_cdefs this_cdef fn_ctyp
     output_string stdout "\n";
     match def with
     | Smtlib.Define_const (nm, ty, exp) -> 
-      let new_modules, new_expr = sv_make_instances nm exp fn_ctyps globals in
+      let new_modules, new_expr = sv_make_instances ctx nm exp fn_ctyps globals in
       (Queue.fold (^^) modules new_modules, Smtlib.Define_const (nm, ty, new_expr) :: code)
     | _ -> (modules, def :: code)
   ) (empty, []) code in
@@ -940,17 +953,17 @@ let sv_fundef ctx f params param_ctyps ret_ctyp body all_cdefs this_cdef fn_ctyp
     ) empty code in
   let param_docs =
     try List.map2 (fun param ctyp ->
-      string "input" ^^ space ^^ sv_ctyp ctyp ^^ space ^^ string "z" ^^ sv_id param ^^ string "_$_0"
+      string "input" ^^ space ^^ sv_smt_ctyp (Jib_smt.smt_ctyp ctx ctyp) ^^ space ^^ string "z" ^^ sv_id param ^^ string "_$_0"
     ) params param_ctyps
     with Invalid_argument _ -> Reporting.unreachable (id_loc f) __POS__ "Function arity mismatch"
   in
-  let return_doc = string "output" ^^ space ^^ sv_ctyp real_res_typ ^^ space ^^ string "return_$_end"
+  let return_doc = string "output" ^^ space ^^ sv_smt_ctyp (Jib_smt.smt_ctyp ctx real_res_typ) ^^ space ^^ string "return_$_end"
   in
   let state_docs = List.map (fun (ty, nm) ->
-    string "input" ^^ space ^^ sv_ctyp ty ^^ space ^^ string (sv_name_for_smt_name (sv_id_string nm) ^ "_$_0")
+    string "input" ^^ space ^^ sv_smt_ctyp (Jib_smt.smt_ctyp ctx ty) ^^ space ^^ string ("z" ^ sv_name_for_smt_name (sv_id_string nm) ^ "_$_0")
    ) globals
   in
-  sv_type_def real_res_typ_def
+  sv_smt_type_def (List.hd real_res_typ_def)
   ^^ twice hardline ^^ string "interface" ^^ space ^^ sv_id f ^^
   parens (separate (comma ^^ space) ((return_doc :: param_docs) @ state_docs)) ^^ semi
   ^^ nest 4 (
@@ -1061,9 +1074,9 @@ let make_genlib_file filename =
   output_string out_chan "`endif\n";
   Util.close_output_with_check file_info
 
-let main_args main fn_ctyps =
+let main_args main fn_ctyps globals =
   match main with
-  (* | Some (CDEF_fundef (f, _, params, body)) -> begin
+  | Some (CDEF_fundef (f, _, params, body)) -> begin
       match Bindings.find_opt f fn_ctyps with
       | Some (param_ctyps, ret_ctyp) -> begin
           let main_args =
@@ -1084,18 +1097,19 @@ let main_args main fn_ctyps =
               (fun (param, param_ctyp) -> string "input" ^^ space ^^ sv_ctyp param_ctyp ^^ space ^^ sv_id param)
               non_unit
           in
+          let result = sv_fn_ret_typ "main" ret_ctyp globals in
           match ret_ctyp with
-          | CT_unit -> (main_args, None, module_main_in)
+          | CT_unit -> (main_args, None, module_main_in, result)
           | _ ->
               ( main_args,
                 Some (string "main_result"),
-                (* FIXME *)
-                (string "output" ^^ space ^^ space ^^ string "main_result") :: module_main_in
+                (string "output" ^^ space ^^ sv_ctyp ret_ctyp ^^ space ^^ string "main_result") :: module_main_in,
+                result
               )
         end
       | None -> Reporting.unreachable (id_loc f) __POS__ ("No function type found for " ^ string_of_id f)
-    end *)
-  | _ -> ([], None, [])
+    end
+  | _ -> ([], None, [], CT_bit)
 
 let sv_globals cdefs = List.filter_map (function
     | CDEF_register (nm, ty, _) -> Some (ty, nm)
@@ -1114,10 +1128,6 @@ let verilog_target _ default_sail_dir out_opt ast effect_info env =
     string "`include \"sail.sv\"" ^^ hardline ^^ ksprintf string "`include \"sail_genlib_%s.sv\"" out ^^ twice hardline
   in
 
-  let exception_vars =
-    string "bit sail_have_exception;" ^^ hardline ^^ string "string sail_throw_location;" ^^ twice hardline
-  in
-
   let globals = sv_globals cdefs in
 
   let in_doc, out_doc, fn_ctyps, setup_calls =
@@ -1128,94 +1138,46 @@ let verilog_target _ default_sail_dir out_opt ast effect_info env =
         | CDLOC_In -> (doc_in ^^ cdef_doc, doc_out, fn_ctyps, setup_calls)
         | CDLOC_Out -> (doc_in, doc_out ^^ cdef_doc, fn_ctyps, setup_calls)
       )
-      (exception_vars, include_doc, Bindings.empty, [])
+      (empty, include_doc, Bindings.empty, [])
       cdefs
   in
 
-  let setup_function =
-    string "function automatic void sail_setup();"
-    ^^ nest 4
-         (hardline ^^ separate_map (semi ^^ hardline) (fun call -> string call ^^ string "()") (List.rev setup_calls))
-    ^^ semi ^^ hardline ^^ string "endfunction" ^^ twice hardline
-  in
-
-  let main_recv_inputs =
-    if !opt_inregs then
-      separate empty
-        (List.filter_map
-           (function
-             | CDEF_register (id, ctyp, _) ->
-                 Some (sv_id id ^^ space ^^ equals ^^ space ^^ sv_id id ^^ string "_in" ^^ semi ^^ hardline)
-             | _ -> None
-             )
-           cdefs
-        )
-    else empty
-  in
-
-  let main_set_outputs =
-    if !opt_inregs then
-      separate empty
-        (List.filter_map
-           (function
-             | CDEF_register (id, ctyp, _) ->
-                 Some (sv_id id ^^ string "_out" ^^ space ^^ equals ^^ space ^^ sv_id id ^^ semi ^^ hardline)
-             | _ -> None
-             )
-           cdefs
-        )
-    else empty
-  in
-
   let main = List.find_opt (function CDEF_fundef (id, _, _, _) -> sv_id_string id = "main" | _ -> false) cdefs in
-  let main_args, main_result, module_main_in_out = main_args main fn_ctyps in
+  let main_args, main_result, module_main_in_out, real_main_result = main_args main fn_ctyps globals in
+  let real_main_result = Jib_smt.smt_ctyp ctx real_main_result in
 
-  let invoke_main_body =
-    hardline
-    ^^ (if Option.is_none main_result then string "sail_unit u;" ^^ hardline else empty)
-    ^^ string "sail_setup();" ^^ hardline ^^ string "$display(\"TEST START\");" ^^ hardline ^^ main_recv_inputs
-    ^^ Option.value main_result ~default:(string "u")
-    ^^ string " = main("
-    ^^ separate (comma ^^ space) main_args
-    ^^ string ");" ^^ hardline ^^ main_set_outputs ^^ string "$display(\"TEST END\");"
+  let main_instance =
+    sv_smt_ctyp real_main_result ^^ space ^^ string "main_out" ^^ semi ^^ hardline ^^
+    string "main" ^^ space ^^ string "main_i" ^^ parens (
+      separate (comma ^^ space) (
+        string "main_out" :: main_args @ List.map (fun (gty, nm) -> string (string_of_id nm ^ "_in")) globals
+      )
+    ) ^^ semi ^^ hardline ^^ hardline in
+
+  let real_main_result_nm, real_main_result_fields = match real_main_result with
+  | Datatype (_, [(nm, fields)]) -> (nm, List.tl fields)
+  | _ -> failwith "unreachable, non datatype result"
   in
 
-  let invoke_main =
-    if not !opt_comb then
-      string "initial" ^^ space ^^ string "begin" ^^ nest 4 invoke_main_body ^^ hardline ^^ string "$finish;"
-      ^^ hardline ^^ string "end"
-    else string "always_comb" ^^ space ^^ string "begin" ^^ nest 4 invoke_main_body ^^ hardline ^^ string "end"
-  in
-
-  let inputs =
-    if !opt_inregs then
-      List.filter_map
-        (function
-          (* | CDEF_register (id, ctyp, _) ->
-              Some (string "input" ^^ space ^^ sv_ctyp ctyp ^^ space ^^ sv_id id ^^ string "_in") *)
-          | _ -> None
-          )
-        cdefs
-    else []
-  in
-
-  let outputs =
-    if !opt_inregs then
-      List.filter_map
-        (function
-          (* | CDEF_register (id, ctyp, _) ->
-              Some (string "output" ^^ space ^^ sv_ctyp ctyp ^^ space ^^ sv_id id ^^ string "_out") *)
-          | _ -> None
-          )
-        cdefs
-    else []
-  in
+  let drive_outputs = separate hardline
+    (List.map2 (fun (_, gnm) (nm, _) ->
+      separate space [
+        string "assign"; string (string_of_id gnm ^ "_out"); equals;
+        (* FIXME: Don't hardcode this *)
+        string "main_out." ^^ string real_main_result_nm ^^ string "_" ^^ string nm
+      ] ^^ semi
+      ) globals real_main_result_fields) in
 
   let sv_output =
     Pretty_print_sail.to_string
       (wrap_module out_doc ("sail_" ^ out)
-         (inputs @ outputs @ module_main_in_out)
-         (in_doc ^^ setup_function ^^ invoke_main)
+         (module_main_in_out @ List.flatten (List.map (fun (gty, nm) ->
+          [
+            string "input" ^^ space ^^ sv_ctyp gty ^^ space ^^ string (string_of_id nm ^ "_in");
+            string "output" ^^ space ^^ sv_ctyp gty ^^ space ^^ string (string_of_id nm ^ "_out")
+          ]
+         ) globals))
+         (in_doc ^^ main_instance ^^ drive_outputs)
       )
   in
   make_genlib_file (sprintf "sail_genlib_%s.sv" out);
