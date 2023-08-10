@@ -707,9 +707,10 @@ let rec sv_smt ?(need_parens = false) =
   | Fn ("bvsle", [x; y]) -> opt_parens (separate space [sv_signed (sv_smt x); string "<="; sv_signed (sv_smt y)])
   | Fn ("bvsgt", [x; y]) -> opt_parens (separate space [sv_signed (sv_smt x); char '>'; sv_signed (sv_smt y)])
   | Fn ("bvsge", [x; y]) -> opt_parens (separate space [sv_signed (sv_smt x); string ">="; sv_signed (sv_smt y)])
-  | Fn ("bvshl", [x; y]) -> opt_parens (separate space [sv_smt x; string "<<"; sv_signed (sv_smt y)])
-  | Fn ("bvlshr", [x; y]) -> opt_parens (separate space [sv_smt x; string ">>"; sv_signed (sv_smt y)])
-  | Fn ("bvashr", [x; y]) -> opt_parens (separate space [sv_smt x; string ">>>"; sv_signed (sv_smt y)])
+  | Fn ("bvshl", [x; y]) -> opt_parens (separate space [sv_smt_parens x; string "<<"; sv_signed (sv_smt y)])
+  | Fn ("bvlshr", [x; y]) -> opt_parens (separate space [sv_smt_parens x; string ">>"; sv_signed (sv_smt y)])
+  | Fn ("bvashr", [x; y]) -> opt_parens (separate space [sv_smt_parens x; string ">>>"; sv_signed (sv_smt y)])
+  | Fn ("bvurem", [x; y]) -> opt_parens (separate space [sv_smt_parens x; string "%"; sv_signed (sv_smt y)])
   | Fn ("contents", [x]) -> sv_smt_parens x ^^ dot ^^ string "bits"
   | Fn ("len", [x]) -> sv_smt_parens x ^^ dot ^^ string "size"
   | SignExtend (len, _, x) -> ksprintf string "unsigned'(%d'(signed'({" len ^^ sv_smt x ^^ string "})))"
@@ -722,6 +723,7 @@ let rec sv_smt ?(need_parens = false) =
   | Extract (n, m, x) ->
       if n = m then braces (sv_smt x) ^^ lbracket ^^ string (string_of_int n) ^^ rbracket
       else braces (sv_smt x) ^^ lbracket ^^ string (string_of_int n) ^^ colon ^^ string (string_of_int m) ^^ rbracket
+  | Access (n, x) -> braces (sv_smt x) ^^ lbracket ^^ string (string_of_int n) ^^ rbracket
   | Fn (f, args) -> string f ^^ parens (separate_map (comma ^^ space) sv_smt args)
   | Var v -> sv_name v
   | Tester (ctor, v) ->

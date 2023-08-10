@@ -91,6 +91,7 @@ type smt_exp =
   | SignExtend of int * int * smt_exp
   | ZeroExtend of int * int * smt_exp
   | Extract of int * int * smt_exp
+  | Access of int * smt_exp
   | Tester of string * smt_exp
   | Unwrap of Ast.id * bool * smt_exp
   | Struct of string * (string * smt_exp) list
@@ -103,6 +104,7 @@ let rec fold_smt_exp f = function
   | SignExtend (len, n, exp) -> f (SignExtend (len, n, fold_smt_exp f exp))
   | ZeroExtend (len, n, exp) -> f (ZeroExtend (len, n, fold_smt_exp f exp))
   | Extract (n, m, exp) -> f (Extract (n, m, fold_smt_exp f exp))
+  | Access (n, exp) -> f (Access (n, fold_smt_exp f exp))
   | Tester (ctor, exp) -> f (Tester (ctor, fold_smt_exp f exp))
   | Unwrap (ctor, b, exp) -> f (Unwrap (ctor, b, fold_smt_exp f exp))
   | Field (struct_id, field_id, exp) -> f (Field (struct_id, field_id, fold_smt_exp f exp))
