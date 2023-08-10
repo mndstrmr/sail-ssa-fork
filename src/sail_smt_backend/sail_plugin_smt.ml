@@ -87,10 +87,7 @@ let smt_options =
       Arg.String (fun n -> Jib_smt.opt_default_vector_index := int_of_string n),
       "<n> set a bound of 2 ^ n for generic vectors in generated SMT (default 5)"
     );
-    ( "-smt_sv",
-      Arg.Set opt_sv,
-      " output system verilog"
-    );
+    ("-smt_sv", Arg.Set opt_sv, " output system verilog");
   ]
 
 let smt_rewrites =
@@ -126,8 +123,7 @@ let smt_rewrites =
   ]
 
 let smt_target a b out_file ast effect_info env =
-  if !opt_sv then
-    Systemverilog.verilog_target a b out_file ast effect_info env
+  if !opt_sv then Systemverilog.verilog_target a b out_file ast effect_info env
   else
     let open Ast_util in
     let props = Property.find_properties ast in

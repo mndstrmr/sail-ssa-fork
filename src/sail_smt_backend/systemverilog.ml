@@ -107,7 +107,7 @@ let verilog_options =
   ]
 
 let verilog_rewrites =
-  let open Rewrites in 
+  let open Rewrites in
   [
     ("instantiate_outcomes", [String_arg "c"]);
     ("realize_mappings", []);
@@ -618,21 +618,21 @@ let sv_type_def = function
 
 let sv_smt_type_def = function
   | Smtlib.Declare_datatypes (nm, ctors) ->
-    if List.length ctors = 1 then
-      let (ctor_nm, fields) = List.hd ctors in
-      separate space [string "typedef"; string "struct"; string "packed"] ^^ space
-      ^^ group (lbrace ^^ nest 4 (
-        hardline ^^
-        separate hardline (
-          List.map (
-            fun (nm, ty) -> sv_smt_ctyp ty ^^ space ^^ string nm ^^ semi
-          ) fields
-        )
-        ) ^^ hardline ^^ rbrace
+      if List.length ctors = 1 then (
+        let ctor_nm, fields = List.hd ctors in
+        separate space [string "typedef"; string "struct"; string "packed"]
+        ^^ space
+        ^^ group
+             (lbrace
+             ^^ nest 4
+                  (hardline
+                  ^^ separate hardline (List.map (fun (nm, ty) -> sv_smt_ctyp ty ^^ space ^^ string nm ^^ semi) fields)
+                  )
+             ^^ hardline ^^ rbrace
+             )
+        ^^ space ^^ string ctor_nm ^^ semi
       )
-      ^^ space ^^ string ctor_nm ^^ semi
-    else
-      failwith "Todo union"
+      else failwith "Todo union"
   | _ -> failwith "Not a datatype"
 
 module Smt =
@@ -750,8 +750,8 @@ let rec sv_smt ?(need_parens = false) =
   | Tester (ctor, v) ->
       opt_parens (separate space [sv_smt v ^^ dot ^^ string "tag"; string "=="; string (ctor |> String.uppercase_ascii)])
   (* | Unwrap (ctor, packed, v) ->
-      if packed then sv_smt v ^^ dot ^^ string "value" ^^ dot ^^ sv_id ctor else sv_smt v ^^ dot ^^ sv_id ctor
-  | Field (_, field, v) -> sv_smt v ^^ dot ^^ sv_id field *)
+         if packed then sv_smt v ^^ dot ^^ string "value" ^^ dot ^^ sv_id ctor else sv_smt v ^^ dot ^^ sv_id ctor
+     | Field (_, field, v) -> sv_smt v ^^ dot ^^ sv_id field *)
   | Ite (cond, then_exp, else_exp) ->
       separate space [sv_smt_parens cond; char '?'; sv_smt_parens then_exp; char ':'; sv_smt_parens else_exp]
   | Enum e -> failwith "Unknown enum"
@@ -760,15 +760,15 @@ let rec sv_smt ?(need_parens = false) =
   | Read_res _ -> failwith "todo: read res"
   | Ctor (nm, args) -> string nm ^^ parens (separate_map (comma ^^ space) sv_smt args)
   | Struct (nm, fields) ->
-      string "'" ^^ braces (
-        separate (comma ^^ space) (List.map (fun (nm, v) -> string nm ^^ string ":" ^^ space ^^ sv_smt v) fields)
-      )
+      string "'"
+      ^^ braces
+           (separate (comma ^^ space) (List.map (fun (nm, v) -> string nm ^^ string ":" ^^ space ^^ sv_smt v) fields))
   | Field (nm, obj) -> sv_smt obj ^^ string "." ^^ string nm
   | Forall _ -> failwith "todo: forall"
 
 (* let sv_cval cval =
-  let* smt = Smt.smt_cval cval in
-  return (sv_smt smt) *)
+   let* smt = Smt.smt_cval cval in
+   return (sv_smt smt) *)
 
 let rec sv_clexp = function
   | CL_id (id, _) -> sv_name id
@@ -776,57 +776,57 @@ let rec sv_clexp = function
   | _ -> string "CLEXP"
 
 (* let clexp_conversion clexp cval =
-  let ctyp_to = clexp_ctyp clexp in
-  let ctyp_from = cval_ctyp cval in
-  let* smt = Smt.smt_cval cval in
-  if ctyp_equal ctyp_to ctyp_from then return (separate space [sv_clexp clexp; equals; sv_smt smt])
-  else (
-    match (ctyp_to, ctyp_from) with
-    | CT_fint sz, CT_constant c ->
-        let n = required_width c in
-        let extended = SignExtend (sz, sz - n, smt) in
-        return (separate space [sv_clexp clexp; equals; sv_smt extended])
-    | CT_lint, CT_constant c ->
-        let n = required_width c in
-        let extended = SignExtend (128, 128 - n, smt) in
-        return (separate space [sv_clexp clexp; equals; sv_smt extended])
-    | CT_lint, CT_fint sz ->
-        let extended = SignExtend (128, 128 - sz, smt) in
-        return (separate space [sv_clexp clexp; equals; sv_smt extended])
-    | CT_fint sz, CT_lint ->
-        let* adjusted = Smt_builtins.force_size sz 128 smt in
-        return (separate space [sv_clexp clexp; equals; sv_smt adjusted])
-    | CT_constant c, _ ->
-        return (separate space [sv_clexp clexp; equals; sv_smt (Smt_builtins.bvint (required_width c) c)])
-    | CT_fbits (sz, _), CT_lbits _ ->
-        let extracted = Extract (sz - 1, 0, Fn ("contents", [smt])) in
-        return (separate space [sv_clexp clexp; equals; sv_smt extracted])
-    | CT_lbits _, CT_fbits (sz, _) when sz <= 128 ->
-        let variable_width =
-          Fn ("Bits", [Smt_builtins.bvpint 8 (Big_int.of_int sz); ZeroExtend (128, 128 - sz, smt)])
-        in
-        return (separate space [sv_clexp clexp; equals; sv_smt variable_width])
-    | _, _ -> failwith ("Unknown conversion from " ^ string_of_ctyp ctyp_from ^ " to " ^ string_of_ctyp ctyp_to)
-  ) *)
+   let ctyp_to = clexp_ctyp clexp in
+   let ctyp_from = cval_ctyp cval in
+   let* smt = Smt.smt_cval cval in
+   if ctyp_equal ctyp_to ctyp_from then return (separate space [sv_clexp clexp; equals; sv_smt smt])
+   else (
+     match (ctyp_to, ctyp_from) with
+     | CT_fint sz, CT_constant c ->
+         let n = required_width c in
+         let extended = SignExtend (sz, sz - n, smt) in
+         return (separate space [sv_clexp clexp; equals; sv_smt extended])
+     | CT_lint, CT_constant c ->
+         let n = required_width c in
+         let extended = SignExtend (128, 128 - n, smt) in
+         return (separate space [sv_clexp clexp; equals; sv_smt extended])
+     | CT_lint, CT_fint sz ->
+         let extended = SignExtend (128, 128 - sz, smt) in
+         return (separate space [sv_clexp clexp; equals; sv_smt extended])
+     | CT_fint sz, CT_lint ->
+         let* adjusted = Smt_builtins.force_size sz 128 smt in
+         return (separate space [sv_clexp clexp; equals; sv_smt adjusted])
+     | CT_constant c, _ ->
+         return (separate space [sv_clexp clexp; equals; sv_smt (Smt_builtins.bvint (required_width c) c)])
+     | CT_fbits (sz, _), CT_lbits _ ->
+         let extracted = Extract (sz - 1, 0, Fn ("contents", [smt])) in
+         return (separate space [sv_clexp clexp; equals; sv_smt extracted])
+     | CT_lbits _, CT_fbits (sz, _) when sz <= 128 ->
+         let variable_width =
+           Fn ("Bits", [Smt_builtins.bvpint 8 (Big_int.of_int sz); ZeroExtend (128, 128 - sz, smt)])
+         in
+         return (separate space [sv_clexp clexp; equals; sv_smt variable_width])
+     | _, _ -> failwith ("Unknown conversion from " ^ string_of_ctyp ctyp_from ^ " to " ^ string_of_ctyp ctyp_to)
+   ) *)
 
 (* let sv_update_fbits = function
-  | [bv; index; bit] -> begin
-      match (cval_ctyp bv, cval_ctyp index) with
-      | CT_fbits (sz, _), CT_constant c ->
-          let c = Big_int.to_int c in
-          let* bv_smt = Smt.smt_cval bv in
-          let bv_smt_1 = Extract (sz - 1, c + 1, bv_smt) in
-          let bv_smt_2 = Extract (c - 1, 0, bv_smt) in
-          let* bit_smt = Smt.smt_cval bit in
-          let smt =
-            if c = 0 then Fn ("concat", [bv_smt_1; bit_smt])
-            else if c = sz - 1 then Fn ("concat", [bit_smt; bv_smt_2])
-            else Fn ("concat", [bv_smt_1; bit_smt; bv_smt_2])
-          in
-          return (sv_smt smt)
-      | _, _ -> failwith "update_fbits 1"
-    end
-  | _ -> failwith "update_fbits 2" *)
+   | [bv; index; bit] -> begin
+       match (cval_ctyp bv, cval_ctyp index) with
+       | CT_fbits (sz, _), CT_constant c ->
+           let c = Big_int.to_int c in
+           let* bv_smt = Smt.smt_cval bv in
+           let bv_smt_1 = Extract (sz - 1, c + 1, bv_smt) in
+           let bv_smt_2 = Extract (c - 1, 0, bv_smt) in
+           let* bit_smt = Smt.smt_cval bit in
+           let smt =
+             if c = 0 then Fn ("concat", [bv_smt_1; bit_smt])
+             else if c = sz - 1 then Fn ("concat", [bit_smt; bv_smt_2])
+             else Fn ("concat", [bv_smt_1; bit_smt; bv_smt_2])
+           in
+           return (sv_smt smt)
+       | _, _ -> failwith "update_fbits 1"
+     end
+   | _ -> failwith "update_fbits 2" *)
 
 (* let cval_for_ctyp = function CT_unit -> V_lit (VL_unit, CT_unit) *)
 
@@ -845,81 +845,108 @@ let sv_fn_ret_typ_def fn res_typ globals =
 
 let sv_make_instances ctx line_nm exp fn_ctyps globals =
   let instances = Queue.create () in
-  let new_exp = Smtlib.fold_smt_exp (fun exp ->
-    match exp with
-    | Ctor (nm, args) ->
-      let fn_nm = String.sub nm 1 (String.length nm - 1) in
-      Queue.add (
-        match Bindings.find_opt (Id_aux (Id fn_nm, Unknown)) fn_ctyps with
-        | Some (_, ret_ctyp) ->
-          let ty = sv_fn_ret_typ fn_nm ret_ctyp globals in
-          sv_smt_ctyp (Jib_smt.smt_ctyp ctx ty) ^^ space ^^ string (sv_name_for_smt_name line_nm ^ "_$_" ^ fn_nm) ^^ semi ^^ hardline ^^
-          string fn_nm ^^ space ^^ string (sv_name_for_smt_name line_nm ^ "_$_" ^ fn_nm ^ "_$_i") ^^
-          parens (
-            separate (comma ^^ space) (
-              string (sv_name_for_smt_name line_nm ^ "_$_" ^ fn_nm) :: List.map sv_smt args
-            )
-          ) ^^ semi ^^ hardline
-        | None -> failwith ("Could not find type for call of " ^ fn_nm)
-      ) instances;
-      Var (sv_name_for_smt_name line_nm ^ "_$_" ^ fn_nm)
-    | _ -> exp
-  ) exp in
+  let new_exp =
+    Smtlib.fold_smt_exp
+      (fun exp ->
+        match exp with
+        | Ctor (nm, args) ->
+            let fn_nm = String.sub nm 1 (String.length nm - 1) in
+            Queue.add
+              ( match Bindings.find_opt (Id_aux (Id fn_nm, Unknown)) fn_ctyps with
+              | Some (_, ret_ctyp) ->
+                  let ty = sv_fn_ret_typ fn_nm ret_ctyp globals in
+                  sv_smt_ctyp (Jib_smt.smt_ctyp ctx ty)
+                  ^^ space
+                  ^^ string (sv_name_for_smt_name line_nm ^ "_$_" ^ fn_nm)
+                  ^^ semi ^^ hardline ^^ string fn_nm ^^ space
+                  ^^ string (sv_name_for_smt_name line_nm ^ "_$_" ^ fn_nm ^ "_$_i")
+                  ^^ parens
+                       (separate (comma ^^ space)
+                          (string (sv_name_for_smt_name line_nm ^ "_$_" ^ fn_nm) :: List.map sv_smt args)
+                       )
+                  ^^ semi ^^ hardline
+              | None -> failwith ("Could not find type for call of " ^ fn_nm)
+              )
+              instances;
+            Var (sv_name_for_smt_name line_nm ^ "_$_" ^ fn_nm)
+        | _ -> exp
+      )
+      exp
+  in
   (instances, new_exp)
 
 let sv_end_assignment name code =
-  name ^ "/" ^ string_of_int (List.fold_left max 0 (List.filter_map (function
-    | Smtlib.Define_const (nm, ty, exp) ->
-      if String.starts_with ~prefix:(name ^ "/") nm
-        then Some (int_of_string (String.sub nm (1 + String.length name) (String.length nm - String.length name - 1)))
-        else None
-    | _ -> None
-  ) code))
+  name ^ "/"
+  ^ string_of_int
+      (List.fold_left max 0
+         (List.filter_map
+            (function
+              | Smtlib.Define_const (nm, ty, exp) ->
+                  if String.starts_with ~prefix:(name ^ "/") nm then
+                    Some
+                      (int_of_string
+                         (String.sub nm (1 + String.length name) (String.length nm - String.length name - 1))
+                      )
+                  else None
+              | _ -> None
+              )
+            code
+         )
+      )
 
 let sv_end_assignmentz name code =
-  "z" ^ name ^ "/" ^ string_of_int (List.fold_left max 0 (List.filter_map (function
-    | Smtlib.Define_const (nm, ty, exp) ->
-      if String.starts_with ~prefix:("z" ^ name ^ "/") nm
-        then Some (int_of_string (String.sub nm (2 + String.length name) (String.length nm - String.length name - 2)))
-        else None
-    | _ -> None
-  ) code))
+  "z" ^ name ^ "/"
+  ^ string_of_int
+      (List.fold_left max 0
+         (List.filter_map
+            (function
+              | Smtlib.Define_const (nm, ty, exp) ->
+                  if String.starts_with ~prefix:("z" ^ name ^ "/") nm then
+                    Some
+                      (int_of_string
+                         (String.sub nm (2 + String.length name) (String.length nm - String.length name - 2))
+                      )
+                  else None
+              | _ -> None
+              )
+            code
+         )
+      )
 
-let sv_inject_function_state_args globals this_res_typ this_orig_res_type (I_aux (instr, x))  = match instr with
+let sv_inject_function_state_args globals this_res_typ this_orig_res_type (I_aux (instr, x)) =
+  match instr with
   | I_funcall (CL_id (i, res_typ), ext, (Id_aux (Id fn, _), argtyps), args) when not (fn = "add_bits_int") ->
-    let ty = sv_fn_ret_typ fn res_typ globals in
-    let tmp = name (mk_id (fn ^ "_$_res_tmp"))
-    in
-    [
-      I_aux (I_funcall (CL_id (tmp, ty), ext, (
-        mk_id fn,
-        argtyps
-        (* FIXME: Should include extra types here, but that changes function signature and therefore name, so type lookup fails later *)
-        (* @ List.map fst globals *)
-      ), args
-      @ List.map (fun (gty, nm) -> V_id (global nm, gty)) globals
-      ), x);
-      I_aux (I_copy (CL_id (i, res_typ), V_field (V_id (tmp, ty), mk_id "res")), x)
-    ]
-    @ List.map (fun (gty, id) ->
-      I_aux (I_copy (CL_id (global id, gty), V_field (V_id (tmp, ty), id)), x)
-    ) globals
+      let ty = sv_fn_ret_typ fn res_typ globals in
+      let tmp = name (mk_id (fn ^ "_$_res_tmp")) in
+      [
+        I_aux
+          ( I_funcall
+              ( CL_id (tmp, ty),
+                ext,
+                ( mk_id fn,
+                  argtyps
+                  (* FIXME: Should include extra types here, but that changes function signature and therefore name, so type lookup fails later *)
+                  (* @ List.map fst globals *)
+                ),
+                args @ List.map (fun (gty, nm) -> V_id (global nm, gty)) globals
+              ),
+            x
+          );
+        I_aux (I_copy (CL_id (i, res_typ), V_field (V_id (tmp, ty), mk_id "res")), x);
+      ]
+      @ List.map (fun (gty, id) -> I_aux (I_copy (CL_id (global id, gty), V_field (V_id (tmp, ty), id)), x)) globals
   | I_copy (CL_id (nm, _), exp) when string_of_name nm = "return" ->
-    let struc = V_struct (
-      (mk_id "res", exp) :: List.map (fun (gty, id) ->
-        (id, V_id (global id, gty))
-      ) globals,
-      this_res_typ
-    ) in
-    [
-      I_aux (I_copy (CL_id (nm, this_res_typ), struc), x)
-    ]
+      let struc =
+        V_struct ((mk_id "res", exp) :: List.map (fun (gty, id) -> (id, V_id (global id, gty))) globals, this_res_typ)
+      in
+      [I_aux (I_copy (CL_id (nm, this_res_typ), struc), x)]
   | _ -> [I_aux (instr, x)]
 
 let sv_fundef ctx f params param_ctyps ret_ctyp body all_cdefs this_cdef fn_ctyps globals =
-  let arg_ctyps, ret_ctyps = match Bindings.find_opt f fn_ctyps with
-  | Some (arg_ctyps, ret_ctyp) -> (arg_ctyps, ret_ctyp)
-  | _ -> failwith "Could not find type"
+  let arg_ctyps, ret_ctyps =
+    match Bindings.find_opt f fn_ctyps with
+    | Some (arg_ctyps, ret_ctyp) -> (arg_ctyps, ret_ctyp)
+    | _ -> failwith "Could not find type"
   in
   let real_res_typ = sv_fn_ret_typ (string_of_id f) ret_ctyps globals in
   let real_res_typ_def = Jib_smt.smt_ctype_def ctx (sv_fn_ret_typ_def (string_of_id f) ret_ctyps globals) in
@@ -933,69 +960,101 @@ let sv_fundef ctx f params param_ctyps ret_ctyp body all_cdefs this_cdef fn_ctyp
   in
   let stack, _, _ = Jib_smt.smt_instr_list (sv_id_string f) ctx all_cdefs instrs in
   let code = Jib_smt.smt_header ctx all_cdefs @ Stack.fold (fun x y -> y :: x) [] stack in
-  let modules, code = List.fold_right (fun def (modules, code) ->
-    output_string stdout (Smtlib.string_of_smt_def def);
-    output_string stdout "\n";
-    match def with
-    | Smtlib.Define_const (nm, ty, exp) -> 
-      let new_modules, new_expr = sv_make_instances ctx nm exp fn_ctyps globals in
-      (Queue.fold (^^) modules new_modules, Smtlib.Define_const (nm, ty, new_expr) :: code)
-    | _ -> (modules, def :: code)
-  ) code (empty, []) in
+  let modules, code =
+    List.fold_right
+      (fun def (modules, code) ->
+        output_string stdout (Smtlib.string_of_smt_def def);
+        output_string stdout "\n";
+        match def with
+        | Smtlib.Define_const (nm, ty, exp) ->
+            let new_modules, new_expr = sv_make_instances ctx nm exp fn_ctyps globals in
+            (Queue.fold ( ^^ ) modules new_modules, Smtlib.Define_const (nm, ty, new_expr) :: code)
+        | _ -> (modules, def :: code)
+      )
+      code (empty, [])
+  in
   let final_return = sv_end_assignment "return" code in
-  let decl_doc = List.fold_left
-  (fun doc def ->
-    match def with
-    | Smtlib.Define_const (nm, ty, exp) -> doc ^^
-      separate space [sv_smt_ctyp ty; string (sv_name_for_smt_name nm)] ^^ semi ^^ hardline
-    | _ -> doc
-  ) empty code in
-  let code_doc = List.fold_left
-    (fun doc def ->
-      match def with
-      | Smtlib.Define_const (nm, ty, exp) -> doc ^^
-        separate space [string "assign"; string (sv_name_for_smt_name nm); equals; sv_smt exp] ^^ semi ^^ hardline
-      | _ -> doc
-    ) empty code in
+  let decl_doc =
+    List.fold_left
+      (fun doc def ->
+        match def with
+        | Smtlib.Define_const (nm, ty, exp) ->
+            doc ^^ separate space [sv_smt_ctyp ty; string (sv_name_for_smt_name nm)] ^^ semi ^^ hardline
+        | _ -> doc
+      )
+      empty code
+  in
+  let code_doc =
+    List.fold_left
+      (fun doc def ->
+        match def with
+        | Smtlib.Define_const (nm, ty, exp) ->
+            doc
+            ^^ separate space [string "assign"; string (sv_name_for_smt_name nm); equals; sv_smt exp]
+            ^^ semi ^^ hardline
+        | _ -> doc
+      )
+      empty code
+  in
   let param_docs =
-    try List.map2 (fun param ctyp ->
-      string "input" ^^ space ^^ sv_smt_ctyp (Jib_smt.smt_ctyp ctx ctyp) ^^ space ^^ string "z" ^^ sv_id param ^^ string "_$_0"
-    ) params param_ctyps
+    try
+      List.map2
+        (fun param ctyp ->
+          string "input" ^^ space
+          ^^ sv_smt_ctyp (Jib_smt.smt_ctyp ctx ctyp)
+          ^^ space ^^ string "z" ^^ sv_id param ^^ string "_$_0"
+        )
+        params param_ctyps
     with Invalid_argument _ -> Reporting.unreachable (id_loc f) __POS__ "Function arity mismatch"
   in
-  let return_doc = string "output" ^^ space ^^ sv_smt_ctyp (Jib_smt.smt_ctyp ctx real_res_typ) ^^ space ^^ string "return_$_end"
+  let return_doc =
+    string "output" ^^ space ^^ sv_smt_ctyp (Jib_smt.smt_ctyp ctx real_res_typ) ^^ space ^^ string "return_$_end"
   in
-  let state_docs = List.map (fun (ty, nm) ->
-    string "input" ^^ space ^^ sv_smt_ctyp (Jib_smt.smt_ctyp ctx ty) ^^ space ^^ string ("z" ^ sv_name_for_smt_name (sv_id_string nm) ^ "_$_0")
-   ) globals
+  let state_docs =
+    List.map
+      (fun (ty, nm) ->
+        string "input" ^^ space
+        ^^ sv_smt_ctyp (Jib_smt.smt_ctyp ctx ty)
+        ^^ space
+        ^^ string ("z" ^ sv_name_for_smt_name (sv_id_string nm) ^ "_$_0")
+      )
+      globals
   in
   sv_smt_type_def (List.hd real_res_typ_def)
-  ^^ twice hardline ^^ string "interface" ^^ space ^^ sv_id f ^^
-  parens (separate (comma ^^ space) ((return_doc :: param_docs) @ state_docs)) ^^ semi
-  ^^ nest 4 (
-    hardline ^^
-    decl_doc ^^ modules ^^ code_doc
-    ^^ separate space [string "assign"; string (sv_name_for_smt_name "return_$_end"); equals; string (sv_name_for_smt_name final_return)] ^^ semi
-  )
+  ^^ twice hardline ^^ string "interface" ^^ space ^^ sv_id f
+  ^^ parens (separate (comma ^^ space) ((return_doc :: param_docs) @ state_docs))
+  ^^ semi
+  ^^ nest 4
+       (hardline ^^ decl_doc ^^ modules ^^ code_doc
+       ^^ separate space
+            [
+              string "assign";
+              string (sv_name_for_smt_name "return_$_end");
+              equals;
+              string (sv_name_for_smt_name final_return);
+            ]
+       ^^ semi
+       )
   ^^ hardline ^^ string "endinterface"
 
 let filter_clear = filter_instrs (function I_aux (I_clear _, _) -> false | _ -> true)
 
 (* let sv_setup_function ctx name setup =
-  let setup =
-    Jib_optimize.(
-      setup |> flatten_instrs |> remove_dead_code |> variable_decls_to_top |> structure_control_flow_block
-      |> filter_clear
-    )
-  in
-  separate space [string "function"; string "automatic"; string "void"; string name]
-  ^^ string "()" ^^ semi
-  ^^ nest 4 (hardline ^^ separate_map hardline (sv_checked_instr ctx) setup)
-  ^^ hardline ^^ string "endfunction" ^^ twice hardline *)
+   let setup =
+     Jib_optimize.(
+       setup |> flatten_instrs |> remove_dead_code |> variable_decls_to_top |> structure_control_flow_block
+       |> filter_clear
+     )
+   in
+   separate space [string "function"; string "automatic"; string "void"; string name]
+   ^^ string "()" ^^ semi
+   ^^ nest 4 (hardline ^^ separate_map hardline (sv_checked_instr ctx) setup)
+   ^^ hardline ^^ string "endfunction" ^^ twice hardline *)
 
 type sv_cdef_loc = CDLOC_Out | CDLOC_In
 
-let sv_cdef ctx fn_ctyps setup_calls all_cdefs cdef globals = match cdef with
+let sv_cdef ctx fn_ctyps setup_calls all_cdefs cdef globals =
+  match cdef with
   (* | CDEF_register (id, ctyp, setup) ->
       let binding_doc = sv_ctyp ctyp ^^ space ^^ sv_id id ^^ semi ^^ twice hardline in
       let name = sprintf "sail_setup_reg_%s" (sv_id_string id) in
@@ -1013,7 +1072,11 @@ let sv_cdef ctx fn_ctyps setup_calls all_cdefs cdef globals = match cdef with
       begin
         match Bindings.find_opt f fn_ctyps with
         | Some (param_ctyps, ret_ctyp) ->
-            (sv_fundef ctx f params param_ctyps ret_ctyp body all_cdefs cdef fn_ctyps globals ^^ twice hardline, fn_ctyps, setup_calls, CDLOC_Out)
+            ( sv_fundef ctx f params param_ctyps ret_ctyp body all_cdefs cdef fn_ctyps globals ^^ twice hardline,
+              fn_ctyps,
+              setup_calls,
+              CDLOC_Out
+            )
         | None -> Reporting.unreachable (id_loc f) __POS__ ("No function type found for " ^ string_of_id f)
       end
   (* | CDEF_let (n, bindings, setup) ->
@@ -1117,10 +1180,7 @@ let main_args main fn_ctyps globals =
     end
   | _ -> ([], None, [], CT_bit)
 
-let sv_globals cdefs = List.filter_map (function
-    | CDEF_register (nm, ty, _) -> Some (ty, nm)
-    | _ -> None
-  ) cdefs
+let sv_globals cdefs = List.filter_map (function CDEF_register (nm, ty, _) -> Some (ty, nm) | _ -> None) cdefs
 
 let verilog_target _ default_sail_dir out_opt ast effect_info env =
   let sail_dir = Reporting.get_sail_dir default_sail_dir in
@@ -1153,36 +1213,54 @@ let verilog_target _ default_sail_dir out_opt ast effect_info env =
   let real_main_result = Jib_smt.smt_ctyp ctx real_main_result in
 
   let main_instance =
-    sv_smt_ctyp real_main_result ^^ space ^^ string "main_out" ^^ semi ^^ hardline ^^
-    string "main" ^^ space ^^ string "main_i" ^^ parens (
-      separate (comma ^^ space) (
-        string "main_out" :: main_args @ List.map (fun (gty, nm) -> string (string_of_id nm ^ "_in")) globals
-      )
-    ) ^^ semi ^^ hardline ^^ hardline in
-
-  let real_main_result_nm, real_main_result_fields = match real_main_result with
-  | Datatype (_, [(nm, fields)]) -> (nm, List.tl fields)
-  | _ -> failwith "unreachable, non datatype result"
+    sv_smt_ctyp real_main_result ^^ space ^^ string "main_out" ^^ semi ^^ hardline ^^ string "main" ^^ space
+    ^^ string "main_i"
+    ^^ parens
+         (separate (comma ^^ space)
+            ((string "main_out" :: main_args) @ List.map (fun (gty, nm) -> string (string_of_id nm ^ "_in")) globals)
+         )
+    ^^ semi ^^ hardline ^^ hardline
   in
 
-  let drive_outputs = separate hardline
-    (List.map2 (fun (_, gnm) (nm, _) ->
-      separate space [
-        string "assign"; string (string_of_id gnm ^ "_out"); equals;
-        (* FIXME: Don't hardcode this *)
-        string "main_out." ^^ string real_main_result_nm ^^ string "_" ^^ string nm
-      ] ^^ semi
-      ) globals real_main_result_fields) in
+  let real_main_result_nm, real_main_result_fields =
+    match real_main_result with
+    | Datatype (_, [(nm, fields)]) -> (nm, List.tl fields)
+    | _ -> failwith "unreachable, non datatype result"
+  in
+
+  let drive_outputs =
+    separate hardline
+      (List.map2
+         (fun (_, gnm) (nm, _) ->
+           separate space
+             [
+               string "assign";
+               string (string_of_id gnm ^ "_out");
+               equals;
+               (* FIXME: Don't hardcode this *)
+               string "main_out." ^^ string real_main_result_nm ^^ string "_" ^^ string nm;
+             ]
+           ^^ semi
+         )
+         globals real_main_result_fields
+      )
+  in
 
   let sv_output =
     Pretty_print_sail.to_string
       (wrap_module out_doc ("sail_" ^ out)
-         (module_main_in_out @ List.flatten (List.map (fun (gty, nm) ->
-          [
-            string "input" ^^ space ^^ sv_ctyp gty ^^ space ^^ string (string_of_id nm ^ "_in");
-            string "output" ^^ space ^^ sv_ctyp gty ^^ space ^^ string (string_of_id nm ^ "_out")
-          ]
-         ) globals))
+         (module_main_in_out
+         @ List.flatten
+             (List.map
+                (fun (gty, nm) ->
+                  [
+                    string "input" ^^ space ^^ sv_ctyp gty ^^ space ^^ string (string_of_id nm ^ "_in");
+                    string "output" ^^ space ^^ sv_ctyp gty ^^ space ^^ string (string_of_id nm ^ "_out");
+                  ]
+                )
+                globals
+             )
+         )
          (in_doc ^^ main_instance ^^ drive_outputs)
       )
   in
