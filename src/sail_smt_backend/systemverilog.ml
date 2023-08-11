@@ -913,9 +913,14 @@ let sv_end_assignmentz name code =
          )
       )
 
-let sv_inject_function_state_args globals this_res_typ this_orig_res_type (I_aux (instr, x)) =
+let rec function_body_exists name = function
+| CDEF_fundef (nm, _, _, _) :: xs when string_of_id nm = name -> true
+| _ :: xs -> function_body_exists name xs
+| [] -> false
+  
+let sv_inject_function_state_args all_cdefs globals this_res_typ this_orig_res_type (I_aux (instr, x)) =
   match instr with
-  | I_funcall (CL_id (i, res_typ), ext, (Id_aux (Id fn, _), argtyps), args) when not (fn = "add_bits_int") ->
+  | I_funcall (CL_id (i, res_typ), ext, (Id_aux (Id fn, _), argtyps), args) when function_body_exists fn all_cdefs ->
       let ty = sv_fn_ret_typ fn res_typ globals in
       let tmp = name (mk_id (fn ^ "_$_res_tmp")) in
       [
@@ -955,7 +960,7 @@ let sv_fundef ctx f params param_ctyps ret_ctyp body all_cdefs this_cdef fn_ctyp
     body
     |> List.map (map_instr (Jib_smt.expand_reg_deref ctx.tc_env ctx.register_map))
     |> flatten_instrs |> remove_unused_labels |> remove_pointless_goto
-    |> List.map (sv_inject_function_state_args globals real_res_typ ret_ctyps)
+    |> List.map (sv_inject_function_state_args all_cdefs globals real_res_typ ret_ctyps)
     |> List.concat
   in
   let stack, _, _ = Jib_smt.smt_instr_list (sv_id_string f) ctx all_cdefs instrs in
