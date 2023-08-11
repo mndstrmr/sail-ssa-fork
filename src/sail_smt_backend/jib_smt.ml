@@ -2340,6 +2340,7 @@ let compile env effect_info ast =
     let ctx = Jib_compile.initial_ctx env effect_info in
     let t = Profile.start () in
     let cdefs, ctx = Jibc.compile_ast ctx ast in
+    let cdefs, ctx = Jib_optimize.remove_tuples cdefs ctx in
     Profile.finish "Compiling to Jib IR" t;
     (cdefs, ctx)
   in

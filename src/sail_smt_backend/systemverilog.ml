@@ -452,7 +452,8 @@ let rec sv_smt_ctyp = function
   | Real -> string "real"
   | Datatype (nm, _) when nm = "Unit" -> string "sail_unit"
   | Datatype (nm, _) -> string nm
-  | Tuple _ -> failwith "tuple"
+  (* FIXME: What to do here? *)
+  | Tuple _ -> string "tuple"
   | Array _ -> failwith "array"
 
 let rec sv_ctyp = function
@@ -617,6 +618,7 @@ let sv_type_def = function
       )
 
 let sv_smt_type_def = function
+  | Smtlib.Declare_datatypes ("Unit", _) -> empty
   | Smtlib.Declare_datatypes (nm, ctors) ->
       if List.length ctors = 1 then (
         let ctor_nm, fields = List.hd ctors in
@@ -630,10 +632,10 @@ let sv_smt_type_def = function
                   )
              ^^ hardline ^^ rbrace
              )
-        ^^ space ^^ string ctor_nm ^^ semi
+        ^^ space ^^ string ctor_nm ^^ semi ^^ twice hardline
       )
       else failwith "Todo union"
-  | _ -> failwith "Not a datatype"
+  | _ -> empty
 
 module Smt =
   Smt_builtins.Make
@@ -744,7 +746,11 @@ let rec sv_smt ?(need_parens = false) =
   | Extract (n, m, x) ->
       if n = m then braces (sv_smt x) ^^ lbracket ^^ string (string_of_int n) ^^ rbracket
       else braces (sv_smt x) ^^ lbracket ^^ string (string_of_int n) ^^ colon ^^ string (string_of_int m) ^^ rbracket
-  | Fn (f, args) -> string f ^^ parens (separate_map (comma ^^ space) sv_smt args)
+  | Fn (f, args) ->
+    string "'"
+      ^^ braces
+           (separate (comma ^^ space) (List.map sv_smt args))
+      (* string f ^^ parens (separate_map (comma ^^ space) sv_smt args) *)
   | Syntactic (x, _) -> sv_smt x
   | Var v -> string (sv_name_for_smt_name v)
   | Tester (ctor, v) ->
@@ -758,7 +764,11 @@ let rec sv_smt ?(need_parens = false) =
   | Real_lit _ -> failwith "todo: real lit"
   | Shared _ -> failwith "todo: shared"
   | Read_res _ -> failwith "todo: read res"
-  | Ctor (nm, args) -> string nm ^^ parens (separate_map (comma ^^ space) sv_smt args)
+  (* | Ctor (nm, args) -> string nm ^^ parens (separate_map (comma ^^ space) sv_smt args) *)
+  | Ctor (nm, args) ->
+    string "'"
+      ^^ braces
+           (separate (comma ^^ space) (List.map sv_smt args))
   | Struct (nm, fields) ->
       string "'"
       ^^ braces
@@ -964,7 +974,7 @@ let sv_fundef ctx f params param_ctyps ret_ctyp body all_cdefs this_cdef fn_ctyp
     |> List.concat
   in
   let stack, _, _ = Jib_smt.smt_instr_list (sv_id_string f) ctx all_cdefs instrs in
-  let code = Jib_smt.smt_header ctx all_cdefs @ List.rev (Stack.fold (fun x y -> y :: x) [] stack) in
+  let code = List.rev (Stack.fold (fun x y -> y :: x) [] stack) in
   let code_doc, code =
     List.fold_right
       (fun def (code_doc, code) ->
@@ -987,7 +997,9 @@ let sv_fundef ctx f params param_ctyps ret_ctyp body all_cdefs this_cdef fn_ctyp
       (fun doc def ->
         match def with
         | Smtlib.Define_const (nm, ty, exp) ->
-            separate space [sv_smt_ctyp ty; string (sv_name_for_smt_name nm)] ^^ semi ^^ hardline ^^ doc
+          separate space [sv_smt_ctyp ty; string (sv_name_for_smt_name nm)] ^^ semi ^^ hardline ^^ doc
+        | Smtlib.Declare_const (nm, ty) when not (String.ends_with ~suffix:"/0" nm) ->
+          separate space [sv_smt_ctyp ty; string (sv_name_for_smt_name nm)] ^^ semi ^^ hardline ^^ doc
         | _ -> doc
       )
       empty code
@@ -1017,7 +1029,7 @@ let sv_fundef ctx f params param_ctyps ret_ctyp body all_cdefs this_cdef fn_ctyp
       globals
   in
   sv_smt_type_def (List.hd real_res_typ_def)
-  ^^ twice hardline ^^ string "interface" ^^ space ^^ sv_id f
+  ^^ string "interface" ^^ space ^^ sv_id f
   ^^ parens (separate (comma ^^ space) ((return_doc :: param_docs) @ state_docs))
   ^^ semi
   ^^ nest 4
@@ -1089,12 +1101,13 @@ let register_types cdefs =
     (fun acc cdef -> match cdef with CDEF_register (id, ctyp, _) -> Bindings.add id ctyp acc | _ -> acc)
     Bindings.empty cdefs
 
-let jib_of_ast env ast effect_info =
+(* let jib_of_ast env ast effect_info =
   let open Jib_compile in
   let module Jibc = Make (Verilog_config) in
   let env, effect_info = add_special_functions env effect_info in
   let ctx = initial_ctx env effect_info in
-  Jibc.compile_ast ctx ast
+  let cdefs, ctx = Jibc.compile_ast ctx ast in
+  Jib_optimize.remove_tuples cdefs ctx *)
 
 let wrap_module pre mod_name ins_outs doc =
   pre ^^ hardline ^^ string "module" ^^ space ^^ string mod_name
@@ -1139,7 +1152,7 @@ let make_genlib_file filename =
   output_string out_chan "`endif\n";
   Util.close_output_with_check file_info
 
-let main_args main fn_ctyps globals =
+let main_args ctx main fn_ctyps globals =
   match main with
   | Some (CDEF_fundef (f, _, params, body)) -> begin
       match Bindings.find_opt f fn_ctyps with
@@ -1168,7 +1181,7 @@ let main_args main fn_ctyps globals =
           | _ ->
               ( main_args,
                 Some (string "main_result"),
-                (string "output" ^^ space ^^ sv_ctyp ret_ctyp ^^ space ^^ string "main_result") :: module_main_in,
+                (string "output" ^^ space ^^ sv_smt_ctyp (Jib_smt.smt_ctyp ctx ret_ctyp) ^^ space ^^ string "main_result") :: module_main_in,
                 result
               )
         end
@@ -1192,6 +1205,9 @@ let verilog_target _ default_sail_dir out_opt ast effect_info env =
 
   let globals = sv_globals cdefs in
 
+  let types = Jib_smt.smt_header ctx cdefs in
+  let types_doc = List.fold_right (fun def doc -> doc ^^ sv_smt_type_def def) types empty in
+
   let in_doc, out_doc, fn_ctyps, setup_calls =
     List.fold_left
       (fun (doc_in, doc_out, fn_ctyps, setup_calls) cdef ->
@@ -1200,12 +1216,12 @@ let verilog_target _ default_sail_dir out_opt ast effect_info env =
         | CDLOC_In -> (doc_in ^^ cdef_doc, doc_out, fn_ctyps, setup_calls)
         | CDLOC_Out -> (doc_in, doc_out ^^ cdef_doc, fn_ctyps, setup_calls)
       )
-      (empty, include_doc, Bindings.empty, [])
+      (empty, include_doc ^^ types_doc, Bindings.empty, [])
       cdefs
   in
 
   let main = List.find_opt (function CDEF_fundef (id, _, _, _) -> sv_id_string id = "main" | _ -> false) cdefs in
-  let main_args, main_result, module_main_in_out, real_main_result = main_args main fn_ctyps globals in
+  let main_args, main_result, module_main_in_out, real_main_result = main_args ctx main fn_ctyps globals in
   let real_main_result = Jib_smt.smt_ctyp ctx real_main_result in
 
   let main_instance =
