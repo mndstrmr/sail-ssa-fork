@@ -731,7 +731,7 @@ let sv_smt_type_def = function
       )
   | _ -> (empty, [])
 
-module Smt =
+(* module Smt =
   Smt_builtins.Make
     (struct
       let max_unknown_integer_width = 128
@@ -743,7 +743,7 @@ module Smt =
         | CT_lbits _ -> "sail_print_bits"
         | CT_fbits (sz, _) -> Generate_primop.print_fbits sz
         | _ -> Reporting.unreachable Parse_ast.Unknown __POS__ "print_bits"
-    end)
+    end) *)
 
 let ( let* ) = Smt_builtins.bind
 let return = Smt_builtins.return
