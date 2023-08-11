@@ -445,6 +445,8 @@ let rec is_packed = function
   | CT_struct (_, fields) -> List.for_all (fun (_, ctyp) -> is_packed ctyp) fields
   | _ -> false
 
+let rec smt_is_packed _ = true
+
 let rec sv_smt_ctyp = function
   | Smtlib.Bitvec width -> ksprintf string "logic [%d:0]" (width - 1)
   | Bool -> string "bit"
@@ -452,8 +454,7 @@ let rec sv_smt_ctyp = function
   | Real -> string "real"
   | Datatype (nm, _) when nm = "Unit" -> string "sail_unit"
   | Datatype (nm, _) -> string nm
-  (* FIXME: What to do here? *)
-  | Tuple _ -> string "tuple"
+  | Tuple _ -> failwith "tuple"
   | Array _ -> failwith "array"
 
 let rec sv_ctyp = function
@@ -476,166 +477,259 @@ let rec sv_ctyp = function
   | _ -> empty
 
 let sv_ctyp_default = function CT_bool -> string "0" | CT_bit -> string "1'bX" | _ -> string "DEFAULT"
-
-let sv_type_def = function
-  | CTD_enum (id, ids) ->
-      string "typedef" ^^ space ^^ string "enum" ^^ space
-      ^^ group (lbrace ^^ nest 4 (hardline ^^ separate_map (comma ^^ hardline) sv_id ids) ^^ hardline ^^ rbrace)
-      ^^ space ^^ sv_id id ^^ semi
-  | CTD_struct (id, fields) ->
-      let sv_field (id, ctyp) = sv_ctyp ctyp ^^ space ^^ sv_id id in
-      let can_be_packed = List.for_all (fun (_, ctyp) -> is_packed ctyp) fields in
-      string "typedef" ^^ space ^^ string "struct"
-      ^^ (if can_be_packed then space ^^ string "packed" else empty)
-      ^^ space
-      ^^ group
-           (lbrace ^^ nest 4 (hardline ^^ separate_map (semi ^^ hardline) sv_field fields) ^^ semi ^^ hardline ^^ rbrace)
-      ^^ space ^^ sv_id id ^^ semi
-  | CTD_variant (id, ctors) ->
-      let exception_boilerplate =
-        if Id.compare id (mk_id "exception") = 0 then
-          twice hardline ^^ ksprintf string "%s sail_current_exception;" (sv_id_string id)
-        else empty
-      in
-      let kind_id (id, _) = string_of_id id |> Util.zencode_string |> String.uppercase_ascii |> string in
-      let sv_ctor (id, ctyp) = sv_ctyp ctyp ^^ space ^^ sv_id id in
-      let tag_type = string ("sailtag_" ^ sv_id_string id) in
-      let value_type = string ("sailunion_" ^ sv_id_string id) in
-      let kind_enum =
-        separate space
-          [
-            string "typedef";
-            string "enum";
-            group (lbrace ^^ nest 4 (hardline ^^ separate_map (comma ^^ hardline) kind_id ctors) ^^ hardline ^^ rbrace);
-            tag_type ^^ semi;
-          ]
-      in
-      (* At least verilator only allows unions for packed types (which
-         is roughly equivalent to types that can be represented as
-         finite bitvectors). *)
-      let can_be_packed = List.for_all (fun (_, ctyp) -> is_packed ctyp) ctors in
-      kind_enum ^^ twice hardline
-      ^^
-      if can_be_packed then (
-        let constructors =
-          List.map
-            (fun (ctor_id, ctyp) ->
-              separate space [string "function"; string "automatic"; sv_id id; sv_id ctor_id]
-              ^^ parens (sv_ctyp ctyp ^^ space ^^ char 'v')
-              ^^ semi
-              ^^ nest 4
-                   (hardline ^^ sv_id id ^^ space ^^ char 'r' ^^ semi ^^ hardline
-                   ^^ string ("sailunion_" ^ sv_id_string id)
-                   ^^ space ^^ string "u" ^^ semi ^^ hardline
-                   ^^ separate space
-                        [
-                          string "r.tag";
-                          equals;
-                          string_of_id ctor_id |> Util.zencode_string |> String.uppercase_ascii |> string;
-                        ]
-                   ^^ semi ^^ hardline
-                   ^^ separate space [char 'u' ^^ dot ^^ sv_id ctor_id; equals; char 'v']
-                   ^^ semi ^^ hardline
-                   ^^ separate space [string "r.value"; equals; char 'u']
-                   ^^ semi ^^ hardline ^^ string "return" ^^ space ^^ char 'r' ^^ semi
-                   )
-              ^^ hardline ^^ string "endfunction"
-            )
-            ctors
-        in
-        separate space
-          [
-            string "typedef";
-            string "union";
-            string "packed";
-            group
-              (lbrace
-              ^^ nest 4 (hardline ^^ separate_map (semi ^^ hardline) sv_ctor ctors)
-              ^^ semi ^^ hardline ^^ rbrace
-              );
-            value_type ^^ semi;
-          ]
-        ^^ twice hardline
-        ^^ separate space
+(*
+   let sv_type_def = function
+     | CTD_enum (id, ids) ->
+         string "typedef" ^^ space ^^ string "enum" ^^ space
+         ^^ group (lbrace ^^ nest 4 (hardline ^^ separate_map (comma ^^ hardline) sv_id ids) ^^ hardline ^^ rbrace)
+         ^^ space ^^ sv_id id ^^ semi
+     | CTD_struct (id, fields) ->
+         let sv_field (id, ctyp) = sv_ctyp ctyp ^^ space ^^ sv_id id in
+         let can_be_packed = List.for_all (fun (_, ctyp) -> is_packed ctyp) fields in
+         string "typedef" ^^ space ^^ string "struct"
+         ^^ (if can_be_packed then space ^^ string "packed" else empty)
+         ^^ space
+         ^^ group
+              (lbrace ^^ nest 4 (hardline ^^ separate_map (semi ^^ hardline) sv_field fields) ^^ semi ^^ hardline ^^ rbrace)
+         ^^ space ^^ sv_id id ^^ semi
+     | CTD_variant (id, ctors) ->
+         let exception_boilerplate =
+           if Id.compare id (mk_id "exception") = 0 then
+             twice hardline ^^ ksprintf string "%s sail_current_exception;" (sv_id_string id)
+           else empty
+         in
+         let kind_id (id, _) = string_of_id id |> string in
+         let sv_ctor (id, ctyp) = sv_ctyp ctyp ^^ space ^^ sv_id id in
+         let tag_type = string ("sailtag_" ^ sv_id_string id) in
+         let value_type = string ("sailunion_" ^ sv_id_string id) in
+         let kind_enum =
+           separate space
              [
                string "typedef";
-               string "struct";
+               string "enum";
+               group (lbrace ^^ nest 4 (hardline ^^ separate_map (comma ^^ hardline) kind_id ctors) ^^ hardline ^^ rbrace);
+               tag_type ^^ semi;
+             ]
+         in
+         (* At least verilator only allows unions for packed types (which
+            is roughly equivalent to types that can be represented as
+            finite bitvectors). *)
+         let can_be_packed = List.for_all (fun (_, ctyp) -> is_packed ctyp) ctors in
+         kind_enum ^^ twice hardline
+         ^^
+         if can_be_packed then (
+           let constructors =
+             List.map
+               (fun (ctor_id, ctyp) ->
+                 separate space [string "function"; string "automatic"; sv_id id; sv_id ctor_id]
+                 ^^ parens (sv_ctyp ctyp ^^ space ^^ char 'v')
+                 ^^ semi
+                 ^^ nest 4
+                      (hardline ^^ sv_id id ^^ space ^^ char 'r' ^^ semi ^^ hardline
+                      ^^ string ("sailunion_" ^ sv_id_string id)
+                      ^^ space ^^ string "u" ^^ semi ^^ hardline
+                      ^^ separate space
+                           [
+                             string "r.tag";
+                             equals;
+                             string_of_id ctor_id |> Util.zencode_string |> String.uppercase_ascii |> string;
+                           ]
+                      ^^ semi ^^ hardline
+                      ^^ separate space [char 'u' ^^ dot ^^ sv_id ctor_id; equals; char 'v']
+                      ^^ semi ^^ hardline
+                      ^^ separate space [string "r.value"; equals; char 'u']
+                      ^^ semi ^^ hardline ^^ string "return" ^^ space ^^ char 'r' ^^ semi
+                      )
+                 ^^ hardline ^^ string "endfunction"
+               )
+               ctors
+           in
+           separate space
+             [
+               string "typedef";
+               string "union";
                string "packed";
                group
                  (lbrace
+                 ^^ nest 4 (hardline ^^ separate_map (semi ^^ hardline) sv_ctor ctors)
+                 ^^ semi ^^ hardline ^^ rbrace
+                 );
+               value_type ^^ semi;
+             ]
+           ^^ twice hardline
+           ^^ separate space
+                [
+                  string "typedef";
+                  string "struct";
+                  string "packed";
+                  group
+                    (lbrace
+                    ^^ nest 4
+                         (hardline ^^ tag_type ^^ space ^^ string "tag" ^^ semi ^^ hardline ^^ value_type ^^ space
+                        ^^ string "value"
+                         )
+                    ^^ semi ^^ hardline ^^ rbrace
+                    );
+                  sv_id id ^^ semi;
+                ]
+           ^^ twice hardline
+           ^^ separate (twice hardline) constructors
+           ^^ exception_boilerplate
+         )
+         else (
+           let constructors =
+             List.map
+               (fun (ctor_id, ctyp) ->
+                 separate space [string "function"; string "automatic"; sv_id id; sv_id ctor_id]
+                 ^^ parens (sv_ctyp ctyp ^^ space ^^ char 'v')
+                 ^^ semi
                  ^^ nest 4
-                      (hardline ^^ tag_type ^^ space ^^ string "tag" ^^ semi ^^ hardline ^^ value_type ^^ space
-                     ^^ string "value"
+                      (hardline ^^ sv_id id ^^ space ^^ char 'r' ^^ semi ^^ hardline
+                      ^^ separate space
+                           [
+                             string "r.tag";
+                             equals;
+                             string_of_id ctor_id |> Util.zencode_string |> String.uppercase_ascii |> string;
+                           ]
+                      ^^ semi ^^ hardline
+                      ^^ separate space [char 'r' ^^ dot ^^ sv_id ctor_id; equals; char 'v']
+                      ^^ semi ^^ hardline ^^ string "return" ^^ space ^^ char 'r' ^^ semi
+                      )
+                 ^^ hardline ^^ string "endfunction"
+               )
+               ctors
+           in
+           separate space
+             [
+               string "typedef";
+               string "struct";
+               group
+                 (lbrace
+                 ^^ nest 4
+                      (hardline ^^ tag_type ^^ space ^^ string "tag" ^^ semi ^^ hardline
+                      ^^ separate_map (semi ^^ hardline) sv_ctor ctors
                       )
                  ^^ semi ^^ hardline ^^ rbrace
                  );
                sv_id id ^^ semi;
              ]
-        ^^ twice hardline
-        ^^ separate (twice hardline) constructors
-        ^^ exception_boilerplate
-      )
-      else (
-        let constructors =
-          List.map
-            (fun (ctor_id, ctyp) ->
-              separate space [string "function"; string "automatic"; sv_id id; sv_id ctor_id]
-              ^^ parens (sv_ctyp ctyp ^^ space ^^ char 'v')
-              ^^ semi
-              ^^ nest 4
-                   (hardline ^^ sv_id id ^^ space ^^ char 'r' ^^ semi ^^ hardline
-                   ^^ separate space
-                        [
-                          string "r.tag";
-                          equals;
-                          string_of_id ctor_id |> Util.zencode_string |> String.uppercase_ascii |> string;
-                        ]
-                   ^^ semi ^^ hardline
-                   ^^ separate space [char 'r' ^^ dot ^^ sv_id ctor_id; equals; char 'v']
-                   ^^ semi ^^ hardline ^^ string "return" ^^ space ^^ char 'r' ^^ semi
-                   )
-              ^^ hardline ^^ string "endfunction"
+           ^^ twice hardline
+           ^^ separate (twice hardline) constructors
+           ^^ exception_boilerplate
+         ) *)
+
+type spcl_fn =
+  (* function name, type name, type full name, field list *)
+  | SF_Cons of (ix * ix * ix * (ix * Smtlib.smt_typ) list)
+  (* function name, containing variant *)
+  | SF_Dest of (ix * ix)
+
+let sv_smt_type_def_variant id ctors =
+  let kind_id (id, _) = id |> String.uppercase_ascii |> string in
+  let sv_ctor (id, ctyp) = sv_smt_ctyp ctyp ^^ space ^^ string id in
+  let tag_type = string ("sailtag_" ^ id) in
+  let value_type = string ("sailunion_" ^ id) in
+  let kind_enum =
+    separate space
+      [
+        string "typedef";
+        string "enum";
+        group (lbrace ^^ nest 4 (hardline ^^ separate_map (comma ^^ hardline) kind_id ctors) ^^ hardline ^^ rbrace);
+        tag_type ^^ semi;
+      ]
+  in
+  kind_enum ^^ twice hardline
+  ^^ separate space
+       [
+         string "typedef";
+         string "union";
+         string "packed";
+         group
+           (lbrace ^^ nest 4 (hardline ^^ separate_map (semi ^^ hardline) sv_ctor ctors) ^^ semi ^^ hardline ^^ rbrace);
+         value_type ^^ semi;
+       ]
+  ^^ twice hardline
+  ^^ separate space
+       [
+         string "typedef";
+         string "struct";
+         string "packed";
+         group
+           (lbrace
+           ^^ nest 4
+                (hardline ^^ tag_type ^^ space ^^ string "tag" ^^ semi ^^ hardline ^^ value_type ^^ space
+               ^^ string "value"
+                )
+           ^^ semi ^^ hardline ^^ rbrace
+           );
+         string id ^^ semi;
+       ]
+  ^^ twice hardline
+
+let rec sv_ty_size = function
+  | Smtlib.Bitvec width -> width
+  | Bool -> 1
+  | String -> failwith "size of string"
+  | Real -> failwith "size of real"
+  | Datatype (nm, variants) -> sv_enum_size variants
+  | Tuple _ -> failwith "tuple"
+  | Array _ -> failwith "array"
+
+and sv_variant_size (_, fields) = fields |> List.map (fun (_, ty) -> sv_ty_size ty) |> List.fold_left ( + ) 0
+
+and sv_enum_size variants = variants |> List.map sv_variant_size |> List.fold_left max 0
+
+let sv_smt_type_def_struct nm fields pad_to_size =
+  let padding =
+    match pad_to_size with
+    | None -> empty
+    | Some size ->
+        let pad_bits = size - sv_variant_size (nm, fields) in
+        if pad_bits = 0 then empty
+        else
+          hardline ^^ string "logic" ^^ space
+          ^^ brackets (string (string_of_int (pad_bits - 1)) ^^ colon ^^ string "0")
+          ^^ space ^^ string "_sail_pad" ^^ semi
+  in
+  separate space [string "typedef"; string "struct"; string "packed"]
+  ^^ space
+  ^^ group
+       (lbrace
+       ^^ nest 4
+            (hardline
+            ^^ separate hardline (List.map (fun (nm, ty) -> sv_smt_ctyp ty ^^ space ^^ string nm ^^ semi) fields)
+            ^^ padding
             )
-            ctors
-        in
-        separate space
-          [
-            string "typedef";
-            string "struct";
-            group
-              (lbrace
-              ^^ nest 4
-                   (hardline ^^ tag_type ^^ space ^^ string "tag" ^^ semi ^^ hardline
-                   ^^ separate_map (semi ^^ hardline) sv_ctor ctors
-                   )
-              ^^ semi ^^ hardline ^^ rbrace
-              );
-            sv_id id ^^ semi;
-          ]
-        ^^ twice hardline
-        ^^ separate (twice hardline) constructors
-        ^^ exception_boilerplate
-      )
+       ^^ hardline ^^ rbrace
+       )
+  ^^ space ^^ string nm ^^ semi ^^ twice hardline
 
 let sv_smt_type_def = function
-  | Smtlib.Declare_datatypes ("Unit", _) -> empty
+  | Smtlib.Declare_datatypes ("Unit", _) -> (empty, [])
   | Smtlib.Declare_datatypes (nm, ctors) ->
+      output_string stdout (Smtlib.string_of_smt_def (Smtlib.Declare_datatypes (nm, ctors)));
+      output_string stdout "\n";
       if List.length ctors = 1 then (
         let ctor_nm, fields = List.hd ctors in
-        separate space [string "typedef"; string "struct"; string "packed"]
-        ^^ space
-        ^^ group
-             (lbrace
-             ^^ nest 4
-                  (hardline
-                  ^^ separate hardline (List.map (fun (nm, ty) -> sv_smt_ctyp ty ^^ space ^^ string nm ^^ semi) fields)
-                  )
-             ^^ hardline ^^ rbrace
-             )
-        ^^ space ^^ string ctor_nm ^^ semi ^^ twice hardline
+        (sv_smt_type_def_struct ctor_nm fields None, [SF_Cons (nm, ctor_nm, ctor_nm, fields)])
       )
-      else failwith "Todo union"
-  | _ -> empty
+      else (
+        let max_variant_size = sv_enum_size ctors in
+        let doc, variant_structs, spcls =
+          List.fold_left
+            (fun (doc, variants, spcls) (vnm, fields) ->
+              let variant_name = nm ^ "_$_" ^ vnm in
+              ( doc ^^ sv_smt_type_def_struct variant_name fields (Some max_variant_size),
+                (vnm, Smtlib.Datatype (variant_name, [(variant_name, fields)])) :: variants,
+                (SF_Cons (nm, vnm, variant_name, fields) :: List.map (fun (fnm, _) -> SF_Dest (fnm, vnm)) fields)
+                @ spcls
+              )
+            )
+            (empty, [], []) ctors
+        in
+        (doc ^^ sv_smt_type_def_variant nm variant_structs, spcls)
+      )
+  | _ -> (empty, [])
 
 module Smt =
   Smt_builtins.Make
@@ -691,8 +785,9 @@ let rec hex_bitvector bits =
 let sv_name_for_smt_name = Str.global_replace (Str.regexp "/") "_$_"
 
 (* Convert a SMTLIB expression into SystemVerilog *)
-let rec sv_smt ?(need_parens = false) =
-  let sv_smt_parens exp = sv_smt ~need_parens:true exp in
+let rec sv_smt ?(need_parens = false) spcls =
+  let sv_smt_parens exp = sv_smt ~need_parens:true spcls exp in
+  let sv_smt ?(need_parens = false) = sv_smt ~need_parens spcls in
   let opt_parens doc = if need_parens then parens doc else doc in
   function
   | Smtlib.Bitvec_lit bits ->
@@ -746,11 +841,14 @@ let rec sv_smt ?(need_parens = false) =
   | Extract (n, m, x) ->
       if n = m then braces (sv_smt x) ^^ lbracket ^^ string (string_of_int n) ^^ rbracket
       else braces (sv_smt x) ^^ lbracket ^^ string (string_of_int n) ^^ colon ^^ string (string_of_int m) ^^ rbracket
-  | Fn (f, args) ->
-    string "'"
-      ^^ braces
-           (separate (comma ^^ space) (List.map sv_smt args))
-      (* string f ^^ parens (separate_map (comma ^^ space) sv_smt args) *)
+  (* | Fn ("unzhy", [x]) -> sv_smt x ^^ dot ^^ string "value" ^^ dot ^^ string "zhy" ^^ dot ^^ string "unzhy" *)
+  | Fn (f, [arg]) -> begin
+      match List.find_map (function SF_Dest (snm, x) when snm = f -> Some x | _ -> None) spcls with
+      | Some tn -> sv_smt arg ^^ dot ^^ string "value" ^^ dot ^^ string tn ^^ dot ^^ string f
+      | None -> failwith (sprintf "unknown fn: %s\n" f)
+    end
+  | Fn (f, args) -> failwith (sprintf "unknown fn: %s\n" f)
+  (* string "'" ^^ braces (separate (comma ^^ space) (List.map sv_smt args)) *)
   | Syntactic (x, _) -> sv_smt x
   | Var v -> string (sv_name_for_smt_name v)
   | Tester (ctor, v) ->
@@ -765,10 +863,31 @@ let rec sv_smt ?(need_parens = false) =
   | Shared _ -> failwith "todo: shared"
   | Read_res _ -> failwith "todo: read res"
   (* | Ctor (nm, args) -> string nm ^^ parens (separate_map (comma ^^ space) sv_smt args) *)
-  | Ctor (nm, args) ->
-    string "'"
-      ^^ braces
-           (separate (comma ^^ space) (List.map sv_smt args))
+  | Ctor (nm, args) -> begin
+      match List.find_map (function SF_Cons (x, snm, _, y) when snm = nm -> Some (x, y) | _ -> None) spcls with
+      | Some (tnm, fields) ->
+          string "'"
+          ^^ braces
+               (string "tag" ^^ colon ^^ space
+               ^^ string (String.uppercase_ascii nm)
+               ^^ comma ^^ space ^^ string "value" ^^ colon ^^ space ^^ string "'"
+               ^^ braces
+                    (string nm ^^ colon ^^ space ^^ string "'"
+                    ^^ braces
+                         (separate (comma ^^ space)
+                            (List.map2 (fun arg (field, _) -> string field ^^ colon ^^ space ^^ sv_smt arg) args fields)
+                         )
+                    )
+                  (* separate (comma ^^ space) (
+                       ()
+                       :: List.map2 (fun arg (field, _) ->
+                         string field ^^ colon ^^ space ^^ sv_smt arg
+                       ) args fields
+                     ) *)
+               )
+      | None -> failwith (sprintf "unknown ctor %s\n" nm)
+      (* string "'" ^^ braces (separate (comma ^^ space) (List.map sv_smt args)) *)
+    end
   | Struct (nm, fields) ->
       string "'"
       ^^ braces
@@ -853,32 +972,70 @@ let sv_fn_ret_typ fn res_typ globals =
 let sv_fn_ret_typ_def fn res_typ globals =
   CTD_struct (mk_id (fn ^ "_$_res"), (mk_id "res", res_typ) :: List.map (fun (ty, nm) -> (nm, ty)) globals)
 
-let sv_make_instances ctx line_nm exp fn_ctyps globals =
+let sv_make_instances ctx line_nm exp fn_ctyps globals spcls =
   let instances = Queue.create () in
   let new_exp =
     Smtlib.fold_smt_exp
       (fun exp ->
         match exp with
-        | Ctor (nm, args) ->
+        | Ctor (nm, args) -> begin
             let fn_nm = String.sub nm 1 (String.length nm - 1) in
-            Queue.add
-              ( match Bindings.find_opt (Id_aux (Id fn_nm, Unknown)) fn_ctyps with
-              | Some (_, ret_ctyp) ->
-                  let ty = sv_fn_ret_typ fn_nm ret_ctyp globals in
-                  sv_smt_ctyp (Jib_smt.smt_ctyp ctx ty)
-                  ^^ space
-                  ^^ string (sv_name_for_smt_name line_nm ^ "_$_" ^ fn_nm)
-                  ^^ semi ^^ hardline ^^ string fn_nm ^^ space
-                  ^^ string (sv_name_for_smt_name line_nm ^ "_$_" ^ fn_nm ^ "_$_i")
-                  ^^ parens
-                       (separate (comma ^^ space)
-                          (string (sv_name_for_smt_name line_nm ^ "_$_" ^ fn_nm) :: List.map sv_smt args)
-                       )
+            printf "here: %s\n" nm;
+            match
+              List.find_map
+                (function
+                  | SF_Cons (x, snm, fullname, y) when snm = nm -> Some (x, fullname, y)
+                  | _ ->
+                      printf "reject: %s\n" nm;
+                      None
+                  )
+                spcls
+            with
+            | Some (tn, tfn, fields) ->
+                let tmp_name = sv_name_for_smt_name line_nm ^ "_$_union_tmp" in
+                Queue.add
+                  (separate space [string tfn; string tmp_name]
                   ^^ semi ^^ hardline
-              | None -> failwith ("Could not find type for call of " ^ fn_nm)
-              )
-              instances;
-            Var (sv_name_for_smt_name line_nm ^ "_$_" ^ fn_nm)
+                  ^^ separate space
+                       [
+                         string "assign";
+                         string tmp_name;
+                         equals;
+                         string "'"
+                         ^^ braces
+                              (separate (comma ^^ space)
+                                 (List.map2
+                                    (fun arg (field, _) -> string field ^^ colon ^^ space ^^ sv_smt spcls arg)
+                                    args fields
+                                 )
+                              );
+                       ]
+                  ^^ semi ^^ hardline
+                  )
+                  instances;
+                Struct (tn, [("tag", Var (String.uppercase_ascii nm)); ("value", Var tmp_name)])
+            | None -> begin
+                match Bindings.find_opt (Id_aux (Id fn_nm, Unknown)) fn_ctyps with
+                | Some (_, ret_ctyp) ->
+                    let ty = sv_fn_ret_typ fn_nm ret_ctyp globals in
+                    Queue.add
+                      (sv_smt_ctyp (Jib_smt.smt_ctyp ctx ty)
+                      ^^ space
+                      ^^ string (sv_name_for_smt_name line_nm ^ "_$_" ^ fn_nm)
+                      ^^ semi ^^ hardline ^^ string fn_nm ^^ space
+                      ^^ string (sv_name_for_smt_name line_nm ^ "_$_" ^ fn_nm ^ "_$_i")
+                      ^^ parens
+                           (separate (comma ^^ space)
+                              (string (sv_name_for_smt_name line_nm ^ "_$_" ^ fn_nm) :: List.map (sv_smt spcls) args)
+                           )
+                      ^^ semi ^^ hardline
+                      )
+                      instances;
+                    Var (sv_name_for_smt_name line_nm ^ "_$_" ^ fn_nm)
+                | None -> exp
+              end
+            (* | None -> failwith ("Could not find type for call of " ^ fn_nm) *)
+          end
         | _ -> exp
       )
       exp
@@ -924,10 +1081,10 @@ let sv_end_assignmentz name code =
       )
 
 let rec function_body_exists name = function
-| CDEF_fundef (nm, _, _, _) :: xs when string_of_id nm = name -> true
-| _ :: xs -> function_body_exists name xs
-| [] -> false
-  
+  | CDEF_fundef (nm, _, _, _) :: xs when string_of_id nm = name -> true
+  | _ :: xs -> function_body_exists name xs
+  | [] -> false
+
 let sv_inject_function_state_args all_cdefs globals this_res_typ this_orig_res_type (I_aux (instr, x)) =
   match instr with
   | I_funcall (CL_id (i, res_typ), ext, (Id_aux (Id fn, _), argtyps), args) when function_body_exists fn all_cdefs ->
@@ -957,7 +1114,7 @@ let sv_inject_function_state_args all_cdefs globals this_res_typ this_orig_res_t
       [I_aux (I_copy (CL_id (nm, this_res_typ), struc), x)]
   | _ -> [I_aux (instr, x)]
 
-let sv_fundef ctx f params param_ctyps ret_ctyp body all_cdefs this_cdef fn_ctyps globals =
+let sv_fundef ctx f params param_ctyps ret_ctyp body all_cdefs this_cdef fn_ctyps globals spcls =
   let arg_ctyps, ret_ctyps =
     match Bindings.find_opt f fn_ctyps with
     | Some (arg_ctyps, ret_ctyp) -> (arg_ctyps, ret_ctyp)
@@ -982,10 +1139,11 @@ let sv_fundef ctx f params param_ctyps ret_ctyp body all_cdefs this_cdef fn_ctyp
         output_string stdout "\n";
         match def with
         | Smtlib.Define_const (nm, ty, exp) ->
-            let new_modules, new_expr = sv_make_instances ctx nm exp fn_ctyps globals in
+            let new_modules, new_expr = sv_make_instances ctx nm exp fn_ctyps globals spcls in
             let assign =
-              separate space [string "assign"; string (sv_name_for_smt_name nm); equals; sv_smt new_expr]
-              ^^ semi ^^ hardline in
+              separate space [string "assign"; string (sv_name_for_smt_name nm); equals; sv_smt spcls new_expr]
+              ^^ semi ^^ hardline
+            in
             (code_doc ^^ Queue.fold ( ^^ ) empty new_modules ^^ assign, Smtlib.Define_const (nm, ty, new_expr) :: code)
         | _ -> (code_doc, def :: code)
       )
@@ -997,9 +1155,9 @@ let sv_fundef ctx f params param_ctyps ret_ctyp body all_cdefs this_cdef fn_ctyp
       (fun doc def ->
         match def with
         | Smtlib.Define_const (nm, ty, exp) ->
-          separate space [sv_smt_ctyp ty; string (sv_name_for_smt_name nm)] ^^ semi ^^ hardline ^^ doc
+            separate space [sv_smt_ctyp ty; string (sv_name_for_smt_name nm)] ^^ semi ^^ hardline ^^ doc
         | Smtlib.Declare_const (nm, ty) when not (String.ends_with ~suffix:"/0" nm) ->
-          separate space [sv_smt_ctyp ty; string (sv_name_for_smt_name nm)] ^^ semi ^^ hardline ^^ doc
+            separate space [sv_smt_ctyp ty; string (sv_name_for_smt_name nm)] ^^ semi ^^ hardline ^^ doc
         | _ -> doc
       )
       empty code
@@ -1028,7 +1186,7 @@ let sv_fundef ctx f params param_ctyps ret_ctyp body all_cdefs this_cdef fn_ctyp
       )
       globals
   in
-  sv_smt_type_def (List.hd real_res_typ_def)
+  fst (sv_smt_type_def (List.hd real_res_typ_def))
   ^^ string "interface" ^^ space ^^ sv_id f
   ^^ parens (separate (comma ^^ space) ((return_doc :: param_docs) @ state_docs))
   ^^ semi
@@ -1061,7 +1219,7 @@ let filter_clear = filter_instrs (function I_aux (I_clear _, _) -> false | _ -> 
 
 type sv_cdef_loc = CDLOC_Out | CDLOC_In
 
-let sv_cdef ctx fn_ctyps setup_calls all_cdefs cdef globals =
+let sv_cdef ctx fn_ctyps setup_calls all_cdefs cdef globals spcls =
   match cdef with
   (* | CDEF_register (id, ctyp, setup) ->
       let binding_doc = sv_ctyp ctyp ^^ space ^^ sv_id id ^^ semi ^^ twice hardline in
@@ -1080,7 +1238,7 @@ let sv_cdef ctx fn_ctyps setup_calls all_cdefs cdef globals =
       begin
         match Bindings.find_opt f fn_ctyps with
         | Some (param_ctyps, ret_ctyp) ->
-            ( sv_fundef ctx f params param_ctyps ret_ctyp body all_cdefs cdef fn_ctyps globals ^^ twice hardline,
+            ( sv_fundef ctx f params param_ctyps ret_ctyp body all_cdefs cdef fn_ctyps globals spcls ^^ twice hardline,
               fn_ctyps,
               setup_calls,
               CDLOC_Out
@@ -1102,12 +1260,12 @@ let register_types cdefs =
     Bindings.empty cdefs
 
 (* let jib_of_ast env ast effect_info =
-  let open Jib_compile in
-  let module Jibc = Make (Verilog_config) in
-  let env, effect_info = add_special_functions env effect_info in
-  let ctx = initial_ctx env effect_info in
-  let cdefs, ctx = Jibc.compile_ast ctx ast in
-  Jib_optimize.remove_tuples cdefs ctx *)
+   let open Jib_compile in
+   let module Jibc = Make (Verilog_config) in
+   let env, effect_info = add_special_functions env effect_info in
+   let ctx = initial_ctx env effect_info in
+   let cdefs, ctx = Jibc.compile_ast ctx ast in
+   Jib_optimize.remove_tuples cdefs ctx *)
 
 let wrap_module pre mod_name ins_outs doc =
   pre ^^ hardline ^^ string "module" ^^ space ^^ string mod_name
@@ -1181,7 +1339,11 @@ let main_args ctx main fn_ctyps globals =
           | _ ->
               ( main_args,
                 Some (string "main_result"),
-                (string "output" ^^ space ^^ sv_smt_ctyp (Jib_smt.smt_ctyp ctx ret_ctyp) ^^ space ^^ string "main_result") :: module_main_in,
+                (string "output" ^^ space
+                ^^ sv_smt_ctyp (Jib_smt.smt_ctyp ctx ret_ctyp)
+                ^^ space ^^ string "main_result"
+                )
+                :: module_main_in,
                 result
               )
         end
@@ -1206,12 +1368,32 @@ let verilog_target _ default_sail_dir out_opt ast effect_info env =
   let globals = sv_globals cdefs in
 
   let types = Jib_smt.smt_header ctx cdefs in
-  let types_doc = List.fold_right (fun def doc -> doc ^^ sv_smt_type_def def) types empty in
+  let types_doc, spcls =
+    List.fold_right
+      (fun def (doc, spcls) ->
+        let ty_doc, new_spcls = sv_smt_type_def def in
+        (doc ^^ ty_doc, spcls @ new_spcls)
+      )
+      types (empty, [])
+  in
 
+  (* let spcls = types |> List.map (function
+     | Smtlib.Declare_datatypes (nm, ctors) ->
+       if List.length ctors = 1 then
+         let ctor_nm, fields = List.hd ctors in
+         [SF_Cons (ctor_nm, ctor_nm, sv_smt_ctyp ctyp ^^ space ^^ string id, fields)]
+       else
+         ctors |> List.map (
+           fun (cnm, fields) ->
+             SF_Cons (nm, cnm, fields) ::
+             List.map (fun (fnm, _) -> SF_Dest (fnm, cnm)) fields
+         ) |> List.concat
+     | _ -> []
+     ) |> List.concat in *)
   let in_doc, out_doc, fn_ctyps, setup_calls =
     List.fold_left
       (fun (doc_in, doc_out, fn_ctyps, setup_calls) cdef ->
-        let cdef_doc, fn_ctyps, setup_calls, loc = sv_cdef ctx fn_ctyps setup_calls cdefs cdef globals in
+        let cdef_doc, fn_ctyps, setup_calls, loc = sv_cdef ctx fn_ctyps setup_calls cdefs cdef globals spcls in
         match loc with
         | CDLOC_In -> (doc_in ^^ cdef_doc, doc_out, fn_ctyps, setup_calls)
         | CDLOC_Out -> (doc_in, doc_out ^^ cdef_doc, fn_ctyps, setup_calls)
@@ -1258,13 +1440,13 @@ let verilog_target _ default_sail_dir out_opt ast effect_info env =
       )
   in
 
-  let drive_main_result = separate space
-  [
-    string "assign";
-    string "main_result";
-    equals;
-    string "main_out." ^^ string real_main_result_nm ^^ string "_zres";
-  ] ^^ semi ^^ twice hardline in
+  let drive_main_result =
+    separate space
+      [
+        string "assign"; string "main_result"; equals; string "main_out." ^^ string real_main_result_nm ^^ string "_zres";
+      ]
+    ^^ semi ^^ twice hardline
+  in
 
   let sv_output =
     Pretty_print_sail.to_string
