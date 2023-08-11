@@ -959,17 +959,20 @@ let sv_fundef ctx f params param_ctyps ret_ctyp body all_cdefs this_cdef fn_ctyp
     |> List.concat
   in
   let stack, _, _ = Jib_smt.smt_instr_list (sv_id_string f) ctx all_cdefs instrs in
-  let code = Jib_smt.smt_header ctx all_cdefs @ Stack.fold (fun x y -> y :: x) [] stack in
-  let modules, code =
+  let code = Jib_smt.smt_header ctx all_cdefs @ List.rev (Stack.fold (fun x y -> y :: x) [] stack) in
+  let code_doc, code =
     List.fold_right
-      (fun def (modules, code) ->
+      (fun def (code_doc, code) ->
         output_string stdout (Smtlib.string_of_smt_def def);
         output_string stdout "\n";
         match def with
         | Smtlib.Define_const (nm, ty, exp) ->
             let new_modules, new_expr = sv_make_instances ctx nm exp fn_ctyps globals in
-            (Queue.fold ( ^^ ) modules new_modules, Smtlib.Define_const (nm, ty, new_expr) :: code)
-        | _ -> (modules, def :: code)
+            let assign =
+              separate space [string "assign"; string (sv_name_for_smt_name nm); equals; sv_smt new_expr]
+              ^^ semi ^^ hardline in
+            (code_doc ^^ Queue.fold ( ^^ ) empty new_modules ^^ assign, Smtlib.Define_const (nm, ty, new_expr) :: code)
+        | _ -> (code_doc, def :: code)
       )
       code (empty, [])
   in
@@ -979,19 +982,7 @@ let sv_fundef ctx f params param_ctyps ret_ctyp body all_cdefs this_cdef fn_ctyp
       (fun doc def ->
         match def with
         | Smtlib.Define_const (nm, ty, exp) ->
-            doc ^^ separate space [sv_smt_ctyp ty; string (sv_name_for_smt_name nm)] ^^ semi ^^ hardline
-        | _ -> doc
-      )
-      empty code
-  in
-  let code_doc =
-    List.fold_left
-      (fun doc def ->
-        match def with
-        | Smtlib.Define_const (nm, ty, exp) ->
-            doc
-            ^^ separate space [string "assign"; string (sv_name_for_smt_name nm); equals; sv_smt exp]
-            ^^ semi ^^ hardline
+            separate space [sv_smt_ctyp ty; string (sv_name_for_smt_name nm)] ^^ semi ^^ hardline ^^ doc
         | _ -> doc
       )
       empty code
@@ -1025,7 +1016,7 @@ let sv_fundef ctx f params param_ctyps ret_ctyp body all_cdefs this_cdef fn_ctyp
   ^^ parens (separate (comma ^^ space) ((return_doc :: param_docs) @ state_docs))
   ^^ semi
   ^^ nest 4
-       (hardline ^^ decl_doc ^^ modules ^^ code_doc
+       (hardline ^^ decl_doc ^^ hardline ^^ code_doc
        ^^ separate space
             [
               string "assign";
