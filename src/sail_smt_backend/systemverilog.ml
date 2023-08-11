@@ -1258,6 +1258,14 @@ let verilog_target _ default_sail_dir out_opt ast effect_info env =
       )
   in
 
+  let drive_main_result = separate space
+  [
+    string "assign";
+    string "main_result";
+    equals;
+    string "main_out." ^^ string real_main_result_nm ^^ string "_zres";
+  ] ^^ semi ^^ twice hardline in
+
   let sv_output =
     Pretty_print_sail.to_string
       (wrap_module out_doc ("sail_" ^ out)
@@ -1273,7 +1281,7 @@ let verilog_target _ default_sail_dir out_opt ast effect_info env =
                 globals
              )
          )
-         (in_doc ^^ main_instance ^^ drive_outputs)
+         (in_doc ^^ main_instance ^^ drive_main_result ^^ drive_outputs)
       )
   in
   make_genlib_file (sprintf "sail_genlib_%s.sv" out);
